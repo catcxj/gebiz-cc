@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>GeBIZ Monitor — Detail</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+<header>
+  <h1>GeBIZ Monitor</h1>
+  <nav>
+    <a href="/">← Back to Dashboard</a>
+    <a href="/settings.html">Notification Settings</a>
+  </nav>
+</header>
+
+<main>
+  <div id="root" class="empty">Loading…</div>
+</main>
+
+<script type="module">
+import { api, fmtDate, fmtDateOnly, statusPill } from "/static/app.js";
+
+const doc = new URLSearchParams(location.search).get("doc");
+const $ = (s) => document.querySelector(s);
+const escapeHTML = (s) => (s || "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" }[c]));
+
+async function load() {
+  if (!doc) { $("#root").textContent = "No document_no in URL."; return; }
+  const o = await api(`/opportunities/${encodeURIComponent(doc)}`);
+  $("#root").className = "";
+  $("#root").innerHTML = `
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
+      <h2 style="margin:0;">${escapeHTML(o.document_no)} — ${escapeHTML(o.description || "")}</h2>
+      <div>
+        <button id="toggle-watch" class="primary">${o.is_watched ? "★ Watching" : "☆ Watch"}</button>
+        <button id="export" class="primary" style="background:#6b7280; margin-left:6px;">Export PDF</button>
+      </div>
+    </div>
+    <div class="detail-wrap">
+      <div class="card">
+        <h2>Official Data</h2>
+        <dl class="kv">
+          <dt>Document No.</dt><dd>${escapeHTML(o.document_no)}</dd>
+          <dt>Type</dt><dd>${escapeHTML(o.opportunity_type || "—")}</dd>
+          <dt>Agency</dt><dd>${escapeHTML(o.agency || "—")}</dd>
+          <dt>Category</dt><dd>${escapeHTML(o.procurement_category || "—")}</dd>
+          <dt>Status</dt><dd>${statusPill(o.status)}</dd>
+          <dt>Published</dt><dd>${fmtDateOnly(o.published_date)}</dd>
+          <dt>Closing</dt><dd>${fmtDate(o.closing_at)}</dd>
+          <dt>Contact</dt><dd>${escapeHTML(o.contact_person || "—")}</dd>
+          <dt>Source</dt><dd>${o.source_url ? `<a href="${o.source_url}" target="_blank" rel="noopener">GeBIZ</a>` : "—"}</dd>
+          ${o.award_details ? `<dt>Award</dt><dd><pre style="margin:0;font-size:12px">${escapeHTML(JSON.stringify(o.award_details, null, 2))}</pre></dd>` : ""}
+        </dl>
+
+        <h2 style="margin-top:24px;">Status Timeline</h2>
+        <ul class="timeline">
+          ${(o.status_updates || []).map(s => `<li>${fmtDate(s.changed_at)} — <strong>${s.from_status || "∅"}</strong> → <strong>${s.to_status}</strong></li>`).join("") || `<li><i>No status changes recorded.</i></li>`}
+        </ul>
+      </div>
+
+      <div class="card">
+        <h2>Internal Notes</h2>
+        <form id="note-form">
+          <textarea name="content" placeholder="Add a note…"></textarea>
+          <button class="primary" type="submit" style="margin-top:8px;">Add Note</button>
+        </form>
+        <ul class="timeline" id="notes">
+          ${(o.notes || []).map(n => `<li><strong>${escapeHTML(n.author)}</strong> · ${fmtDate(n.created_at)}<br/>${escapeHTML(n.content)}</li>`).join("") || `<li><i>No notes yet.</i></li>`}
+        </ul>
+      </div>
+    </div>`;
+
+  $("#toggle-watch").addEventListener("click", async (e) => {
+    const watching = e.target.textContent.includes("★");
+    await api(`/opportunities/${encodeURIComponent(doc)}/watch`, { method: watching ? "DELETE" : "POST" });
+    e.target.textContent = watching ? "☆ Watch" : "★ Watching";
+  });
+
+  $("#note-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const content = e.target.content.value.trim();
+    if (!content) return;
+    await api(`/opportunities/${encodeURIComponent(doc)}/notes`, { method: "POST", body: { content } });
+    load();
+  });
+
+  $("#export").addEventListener("click", () => {
+    // PRD mentions "Export PDF" but doesn't specify format — fall back to print dialog for now.
+    window.print();
+  });
+}
+
+load();
+</script>
+</body>
+</html>

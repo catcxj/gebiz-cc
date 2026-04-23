@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>GeBIZ Monitor — Notification Settings</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+<header>
+  <h1>GeBIZ Monitor</h1>
+  <nav>
+    <a href="/">← Back to Dashboard</a>
+  </nav>
+</header>
+
+<main>
+  <div class="card" style="max-width:720px; margin:0 auto;">
+    <h2>Notification Rules</h2>
+    <form id="rule-form">
+      <h3 style="font-size:14px; margin-top:16px;">New Opportunity Keywords</h3>
+      <div class="row">
+        <label>Keywords</label>
+        <input type="text" name="keywords" placeholder="LTA, Construction, BIM, Software, Marketing" />
+      </div>
+      <small style="color:#6b7280;">Comma-separated. Case-insensitive substring match on description or agency.</small>
+
+      <h3 style="font-size:14px; margin-top:24px;">Closing-Date Countdown</h3>
+      <div class="row">
+        <label>Remind before (days)</label>
+        <label style="flex-direction:row;"><input type="checkbox" name="d7" /> 7</label>
+        <label style="flex-direction:row;"><input type="checkbox" name="d3" checked /> 3</label>
+        <label style="flex-direction:row;"><input type="checkbox" name="d1" checked /> 1</label>
+      </div>
+
+      <h3 style="font-size:14px; margin-top:24px;">Delivery Channels</h3>
+      <div class="row">
+        <label><input type="checkbox" name="channel_in_app" checked disabled /> In-app message center</label>
+        <small style="color:#6b7280;">(always on)</small>
+      </div>
+      <div class="row">
+        <label><input type="checkbox" name="channel_email" /> Email</label>
+        <input type="email" name="email_to" placeholder="you@example.com" />
+      </div>
+      <div class="row">
+        <label><input type="checkbox" name="channel_webhook" /> Webhook</label>
+        <input type="url" name="webhook_url" placeholder="https://open.larksuite.com/... or Slack/WeCom incoming webhook" />
+      </div>
+
+      <div style="margin-top:20px;">
+        <button class="primary" type="submit">Save</button>
+        <span id="status" style="margin-left:12px; color:#059669;"></span>
+      </div>
+    </form>
+  </div>
+</main>
+
+<script type="module">
+import { api } from "/static/app.js";
+const $ = (s) => document.querySelector(s);
+const form = $("#rule-form");
+
+function applyRule(r) {
+  form.keywords.value = (r.keywords || []).join(", ");
+  form.d7.checked = r.countdown_days.includes(7);
+  form.d3.checked = r.countdown_days.includes(3);
+  form.d1.checked = r.countdown_days.includes(1);
+  form.channel_email.checked = !!r.channel_email;
+  form.email_to.value = r.email_to || "";
+  form.channel_webhook.checked = !!r.channel_webhook;
+  form.webhook_url.value = r.webhook_url || "";
+}
+
+async function load() {
+  const r = await api("/notification-rules");
+  applyRule(r);
+}
+
+form.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const body = {
+    keywords: form.keywords.value.split(",").map(s => s.trim()).filter(Boolean),
+    countdown_days: [7, 3, 1].filter(d => form[`d${d}`].checked),
+    channel_in_app: true,
+    channel_email: form.channel_email.checked,
+    email_to: form.email_to.value || null,
+    channel_webhook: form.channel_webhook.checked,
+    webhook_url: form.webhook_url.value || null,
+  };
+  const saved = await api("/notification-rules", { method: "PUT", body });
+  applyRule(saved);
+  $("#status").textContent = "Saved ✓";
+  setTimeout(() => $("#status").textContent = "", 2000);
+});
+
+load();
+</script>
+</body>
+</html>

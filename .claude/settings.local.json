@@ -1,0 +1,27 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__mcp-registry__search_mcp_registry",
+      "Bash(python -c ' *)",
+      "Bash(pip --version)",
+      "Bash(pip install *)",
+      "Bash(python -c \"from app.main import app; print\\('import ok'\\)\")",
+      "Bash(python -m app.main)",
+      "Bash(curl -s http://localhost:8000/health)",
+      "Bash(curl -s -X POST http://localhost:8000/api/admin/scrape/trigger)",
+      "Bash(curl -s \"http://localhost:8000/api/opportunities?size=3\")",
+      "Bash(python -m json.tool)",
+      "Bash(curl -s -o /dev/null -w '%{http_code}\\\\n' -X POST http://localhost:8000/api/opportunities/ITQ-20260015/watch)",
+      "Bash(curl -s -X POST http://localhost:8000/api/opportunities/ITQ-20260015/notes -H 'Content-Type: application/json' -d '{\"content\":\"已发邮件沟通\",\"author\":\"alice\"}')",
+      "Bash(curl -s -X PUT \"http://localhost:8000/api/notification-rules\" -H \"Content-Type: application/json\" -d '{\"keywords\":[\"BIM\",\"Construction\"],\"countdown_days\":[3,1],\"channel_in_app\":true,\"channel_email\":false,\"channel_webhook\":false}')",
+      "Bash(curl -s -X POST \"http://localhost:8000/api/opportunities/ITQ-20260015/notes\" -H \"Content-Type: application/json\" -d '{\"content\":\"Sent intro email\",\"author\":\"alice\"}')",
+      "Bash(python -m playwright install chromium)",
+      "Bash(python -c \"from playwright.sync_api import sync_playwright; p=sync_playwright\\(\\).start\\(\\); b=p.chromium.launch\\(\\); print\\('chromium launched:', b.version\\); b.close\\(\\); p.stop\\(\\)\")",
+      "Bash(taskkill //PID 21216 //F)",
+      "Bash(curl -s \"http://localhost:8000/api/admin/scrape/logs?limit=1\")",
+      "Bash(curl -s \"http://localhost:8000/api/opportunities?size=10\")",
+      "Bash(python -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(f'TOTAL: {d[\\\\\"total\\\\\"]}'\\); [print\\(f'  {x[\\\\\"document_no\\\\\"]:<22} type={x[\\\\\"opportunity_type\\\\\"]!s:<22} agency={x[\\\\\"agency\\\\\"]}'\\) for x in d['items']]\")",
+      "Bash(taskkill //IM python.exe //F)"
+    ]
+  }
+}

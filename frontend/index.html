@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>GeBIZ Monitor — Dashboard</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+<header>
+  <h1>GeBIZ Monitor</h1>
+  <nav>
+    <a href="/">Dashboard</a>
+    <a href="#" id="nav-notif">Notifications <span id="unread-badge" class="badge" style="display:none"></span></a>
+    <a href="/settings.html">Notification Settings</a>
+  </nav>
+</header>
+
+<main>
+  <form class="filters" id="filters">
+    <label>Agency
+      <select name="agency"><option value="">All</option></select>
+    </label>
+    <label>Type
+      <select name="type">
+        <option value="">All</option>
+        <option>Auction</option><option>Qualification</option><option>Quotation</option>
+        <option>RequestForInformation</option><option>TenderLite</option><option>Tender</option>
+      </select>
+    </label>
+    <label>Status
+      <select name="status">
+        <option value="">All</option>
+        <option>Open</option><option>Closed</option><option>PendingAward</option>
+        <option>Awarded</option><option>Cancelled</option><option>NoAward</option>
+      </select>
+    </label>
+    <label>Published From <input type="date" name="date_from" /></label>
+    <label>To <input type="date" name="date_to" /></label>
+    <label>Keyword <input type="text" name="q" placeholder="description or doc no" /></label>
+    <label style="flex-direction:row; align-items:center; gap:4px; padding-top:18px;">
+      <input type="checkbox" name="watched_only" /> Watched only
+    </label>
+    <button type="submit">Search</button>
+    <button type="button" class="secondary" id="btn-scrape">Trigger Scrape</button>
+  </form>
+
+  <div id="list-wrap"></div>
+
+  <div class="pagination">
+    <span id="total"></span>
+    <button id="prev">Prev</button>
+    <span id="page"></span>
+    <button id="next">Next</button>
+  </div>
+</main>
+
+<div id="notif-panel"></div>
+
+<script type="module">
+import { api, fmtDate, fmtDateOnly, daysUntil, statusPill, qs } from "/static/app.js";
+
+const state = { page: 1, size: 20, total: 0 };
+const $ = (s) => document.querySelector(s);
+
+async function loadAgencies() {
+  const agencies = await api("/opportunities/meta/agencies");
+  const sel = $("select[name=agency]");
+  agencies.forEach(a => { const o = document.createElement("option"); o.value = o.textContent = a; sel.appendChild(o); });
+}
+
+function readFilters() {
+  const f = $("#filters");
+  const fd = new FormData(f);
+  const obj = {};
+  fd.forEach((v, k) => { if (v) obj[k] = v; });
+  obj.watched_only = f.watched_only.checked ? "true" : "";
+  return obj;
+}
+
+async function load() {
+  const filters = readFilters();
+  const data = await api("/opportunities" + qs({ ...filters, page: state.page, size: state.size }));
+  state.total = data.total;
+  renderList(data.items);
+  $("#total").textContent = `${data.total} result(s)`;
+  $("#page").textContent = `page ${state.page} / ${Math.max(1, Math.ceil(data.total / state.size))}`;
+  $("#prev").disabled = state.page <= 1;
+  $("#next").disabled = state.page * state.size >= data.total;
+}
+
+function renderList(items) {
+  if (!items.length) { $("#list-wrap").innerHTML = `<div class="empty">No opportunities match.</div>`; return; }
+  const rows = items.map(o => {
+    const d = daysUntil(o.closing_at);
+    const closingSoon = d !== null && d >= 0 && d <= 3;
+    return `<tr class="${closingSoon ? "row-closing" : ""}">
+      <td><span class="star ${o.is_watched ? "active" : ""}" data-doc="${o.document_no}">${o.is_watched ? "★" : "☆"}</span></td>
+      <td><a href="/detail.html?doc=${encodeURIComponent(o.document_no)}">${o.document_no}</a></td>
+      <td>${o.opportunity_type || ""}</td>
+      <td>${o.agency || ""}</td>
+      <td><a href="/detail.html?doc=${encodeURIComponent(o.document_no)}">${escapeHTML(o.description || "")}</a></td>
+      <td>${statusPill(o.status)}</td>
+      <td>${fmtDateOnly(o.published_date)}</td>
+      <td>${fmtDate(o.closing_at)} ${d !== null && d >= 0 ? `<small>(${d}d)</small>` : ""}</td>
+    </tr>`;
+  }).join("");
+  $("#list-wrap").innerHTML = `<table>
+    <thead><tr><th></th><th>Doc No.</th><th>Type</th><th>Agency</th><th>Description</th><th>Status</th><th>Published</th><th>Closing</th></tr></thead>
+    <tbody>${rows}</tbody></table>`;
+  $("#list-wrap").querySelectorAll(".star").forEach(el => {
+    el.addEventListener("click", async (e) => {
+      const doc = e.target.dataset.doc;
+      const active = e.target.classList.contains("active");
+      await api(`/opportunities/${encodeURIComponent(doc)}/watch`, { method: active ? "DELETE" : "POST" });
+      e.target.classList.toggle("active");
+      e.target.textContent = active ? "☆" : "★";
+    });
+  });
+}
+
+function escapeHTML(s) { return (s || "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" }[c])); }
+
+$("#filters").addEventListener("submit", (e) => { e.preventDefault(); state.page = 1; load(); });
+$("#prev").addEventListener("click", () => { if (state.page > 1) { state.page--; load(); }});
+$("#next").addEventListener("click", () => { state.page++; load(); });
+$("#btn-scrape").addEventListener("click", async () => { await api("/admin/scrape/trigger", { method: "POST" }); alert("Scrape started."); });
+
+async function refreshUnread() {
+  const ns = await api("/notifications?unread_only=true&limit=50");
+  const badge = $("#unread-badge");
+  if (ns.length) { badge.textContent = ns.length; badge.style.display = "inline"; }
+  else { badge.style.display = "none"; }
+}
+
+$("#nav-notif").addEventListener("click", async (e) => {
+  e.preventDefault();
+  const panel = $("#notif-panel");
+  if (panel.innerHTML) { panel.innerHTML = ""; return; }
+  const ns = await api("/notifications?limit=50");
+  panel.className = "notif-panel";
+  panel.innerHTML = `
+    <div style="padding:8px 12px; display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #eee;">
+      <strong>Notifications</strong>
+      <button id="mark-all" class="primary" style="font-size:12px; padding:4px 10px;">Mark all read</button>
+    </div>
+    ${ns.length ? ns.map(n => `
+      <div class="item ${n.read_at ? "" : "unread"}" data-id="${n.id}">
+        <div><strong>${escapeHTML(n.title)}</strong></div>
+        <div>${escapeHTML(n.body || "")}</div>
+        <div style="color:#888; font-size:11px; margin-top:4px;">${fmtDate(n.created_at)}</div>
+        ${n.document_no ? `<div><a href="/detail.html?doc=${encodeURIComponent(n.document_no)}">→ ${n.document_no}</a></div>` : ""}
+      </div>`).join("") : `<div class="empty">No notifications.</div>`}`;
+  panel.querySelector("#mark-all")?.addEventListener("click", async () => {
+    await api("/notifications/read-all", { method: "POST" });
+    panel.innerHTML = "";
+    refreshUnread();
+  });
+  panel.querySelectorAll(".item.unread").forEach(el => {
+    el.addEventListener("click", async () => {
+      await api(`/notifications/${el.dataset.id}/read`, { method: "PATCH" });
+      el.classList.remove("unread");
+      refreshUnread();
+    });
+  });
+});
+
+loadAgencies();
+load();
+refreshUnread();
+setInterval(refreshUnread, 60_000);
+</script>
+</body>
+</html>
