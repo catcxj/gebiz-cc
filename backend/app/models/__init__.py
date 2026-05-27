@@ -5,6 +5,7 @@ from .opportunity import (
     StatusUpdate,
     InternalNote,
     Watch,
+    OpportunityRespondent,
 )
 from .notification import NotificationRule, Notification, NotificationType
 from .ops import ScrapeLog
@@ -16,6 +17,7 @@ __all__ = [
     "StatusUpdate",
     "InternalNote",
     "Watch",
+    "OpportunityRespondent",
     "NotificationRule",
     "Notification",
     "NotificationType",

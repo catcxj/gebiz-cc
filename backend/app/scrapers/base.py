@@ -11,6 +11,7 @@ from ..models.opportunity import OpportunityType, OpportunityStatus
 @dataclass
 class ScrapedOpportunity:
     document_no: str
+    reference_no: Optional[str] = None
     description: str = ""
     agency: Optional[str] = None
     opportunity_type: Optional[OpportunityType] = None
@@ -21,6 +22,7 @@ class ScrapedOpportunity:
     contact_person: Optional[str] = None
     award_details: Optional[dict] = None
     source_url: Optional[str] = None
+    respondents: list[dict] = field(default_factory=list)
 
 
 class BaseScraper(ABC):
@@ -31,4 +33,8 @@ class BaseScraper(ABC):
 
     @abstractmethod
     async def fetch(self) -> AsyncIterator[ScrapedOpportunity]:
+        ...
+
+    @abstractmethod
+    async def enrich_opportunity(self, doc_no: str) -> Optional[ScrapedOpportunity]:
         ...

@@ -10,6 +10,7 @@
   <h1>GeBIZ Monitor</h1>
   <nav>
     <a href="/">Dashboard</a>
+    <a href="/suppliers.html">Supplier Master</a>
     <a href="#" id="nav-notif">Notifications <span id="unread-badge" class="badge" style="display:none"></span></a>
     <a href="/settings.html">Notification Settings</a>
   </nav>
@@ -96,6 +97,7 @@ function renderList(items) {
     return `<tr class="${closingSoon ? "row-closing" : ""}">
       <td><span class="star ${o.is_watched ? "active" : ""}" data-doc="${o.document_no}">${o.is_watched ? "★" : "☆"}</span></td>
       <td><a href="/detail.html?doc=${encodeURIComponent(o.document_no)}">${o.document_no}</a></td>
+      <td style="font-family:monospace; font-size:12px;">${escapeHTML(o.reference_no || "—")}</td>
       <td>${o.opportunity_type || ""}</td>
       <td>${o.agency || ""}</td>
       <td><a href="/detail.html?doc=${encodeURIComponent(o.document_no)}">${escapeHTML(o.description || "")}</a></td>
@@ -105,7 +107,7 @@ function renderList(items) {
     </tr>`;
   }).join("");
   $("#list-wrap").innerHTML = `<table>
-    <thead><tr><th></th><th>Doc No.</th><th>Type</th><th>Agency</th><th>Description</th><th>Status</th><th>Published</th><th>Closing</th></tr></thead>
+    <thead><tr><th></th><th>Doc No.</th><th>Ref No.</th><th>Type</th><th>Agency</th><th>Description</th><th>Status</th><th>Published</th><th>Closing</th></tr></thead>
     <tbody>${rows}</tbody></table>`;
   $("#list-wrap").querySelectorAll(".star").forEach(el => {
     el.addEventListener("click", async (e) => {
@@ -132,36 +134,77 @@ async function refreshUnread() {
   else { badge.style.display = "none"; }
 }
 
+let activeNotifTab = "alerts"; // "alerts" | "logs"
+let cachedNotifications = [];
+
+function renderNotificationsInPanel() {
+  const panel = $("#notif-panel");
+  const alertsList = cachedNotifications.filter(n => n.type !== "System");
+  const logsList = cachedNotifications.filter(n => n.type === "System");
+  const activeList = activeNotifTab === "alerts" ? alertsList : logsList;
+  
+  const listHtml = activeList.length ? activeList.map(n => `
+    <div class="item ${n.read_at ? "" : "unread"}" data-id="${n.id}">
+      <div><strong>${escapeHTML(n.title)}</strong></div>
+      <div style="margin-top:2px;">${escapeHTML(n.body || "")}</div>
+      <div style="color:#888; font-size:11px; margin-top:4px;">${fmtDate(n.created_at)}</div>
+      ${n.document_no ? `<div><a href="/detail.html?doc=${encodeURIComponent(n.document_no)}">→ ${n.document_no}</a></div>` : ""}
+    </div>`).join("") : `<div class="empty">No notifications in this category.</div>`;
+    
+  panel.innerHTML = `
+    <div style="padding:8px 12px; display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #eee;">
+      <strong>Notifications</strong>
+      <button id="mark-all" class="primary" style="font-size:11px; padding:3px 8px;">Mark all read</button>
+    </div>
+    <div style="display:flex; border-bottom:1px solid #eee; background:#fafafa;">
+      <button id="btn-tab-alerts" style="flex:1; padding:8px; border:none; background:none; cursor:pointer; font-weight:bold; font-size:12px; border-bottom:${activeNotifTab === 'alerts' ? '2px solid #1e40af' : 'none'}; color:${activeNotifTab === 'alerts' ? '#1e40af' : '#6b7280'}">
+        商机动态 (${alertsList.filter(n => !n.read_at).length})
+      </button>
+      <button id="btn-tab-logs" style="flex:1; padding:8px; border:none; background:none; cursor:pointer; font-weight:bold; font-size:12px; border-bottom:${activeNotifTab === 'logs' ? '2px solid #1e40af' : 'none'}; color:${activeNotifTab === 'logs' ? '#1e40af' : '#6b7280'}">
+        系统日志 (${logsList.filter(n => !n.read_at).length})
+      </button>
+    </div>
+    <div style="max-height:360px; overflow-y:auto;">
+      ${listHtml}
+    </div>
+  `;
+  
+  panel.querySelector("#mark-all")?.addEventListener("click", async () => {
+    await api("/notifications/read-all", { method: "POST" });
+    cachedNotifications.forEach(n => n.read_at = new Date().toISOString());
+    renderNotificationsInPanel();
+    refreshUnread();
+  });
+  
+  panel.querySelector("#btn-tab-alerts").addEventListener("click", () => {
+    activeNotifTab = "alerts";
+    renderNotificationsInPanel();
+  });
+  
+  panel.querySelector("#btn-tab-logs").addEventListener("click", () => {
+    activeNotifTab = "logs";
+    renderNotificationsInPanel();
+  });
+  
+  panel.querySelectorAll(".item.unread").forEach(el => {
+    el.addEventListener("click", async () => {
+      await api(`/notifications/${el.dataset.id}/read`, { method: "PATCH" });
+      const notif = cachedNotifications.find(n => n.id == el.dataset.id);
+      if (notif) notif.read_at = new Date().toISOString();
+      el.classList.remove("unread");
+      renderNotificationsInPanel();
+      refreshUnread();
+    });
+  });
+}
+
 $("#nav-notif").addEventListener("click", async (e) => {
   e.preventDefault();
   const panel = $("#notif-panel");
   if (panel.innerHTML) { panel.innerHTML = ""; return; }
-  const ns = await api("/notifications?limit=50");
+  cachedNotifications = await api("/notifications?limit=50");
   panel.className = "notif-panel";
-  panel.innerHTML = `
-    <div style="padding:8px 12px; display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #eee;">
-      <strong>Notifications</strong>
-      <button id="mark-all" class="primary" style="font-size:12px; padding:4px 10px;">Mark all read</button>
-    </div>
-    ${ns.length ? ns.map(n => `
-      <div class="item ${n.read_at ? "" : "unread"}" data-id="${n.id}">
-        <div><strong>${escapeHTML(n.title)}</strong></div>
-        <div>${escapeHTML(n.body || "")}</div>
-        <div style="color:#888; font-size:11px; margin-top:4px;">${fmtDate(n.created_at)}</div>
-        ${n.document_no ? `<div><a href="/detail.html?doc=${encodeURIComponent(n.document_no)}">→ ${n.document_no}</a></div>` : ""}
-      </div>`).join("") : `<div class="empty">No notifications.</div>`}`;
-  panel.querySelector("#mark-all")?.addEventListener("click", async () => {
-    await api("/notifications/read-all", { method: "POST" });
-    panel.innerHTML = "";
-    refreshUnread();
-  });
-  panel.querySelectorAll(".item.unread").forEach(el => {
-    el.addEventListener("click", async () => {
-      await api(`/notifications/${el.dataset.id}/read`, { method: "PATCH" });
-      el.classList.remove("unread");
-      refreshUnread();
-    });
-  });
+  renderNotificationsInPanel();
 });
 
 loadAgencies();

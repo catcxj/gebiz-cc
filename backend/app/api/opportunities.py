@@ -3,14 +3,15 @@ from __future__ import annotations
 from datetime import date
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import or_, func
+from sqlalchemy import or_, func, case
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..models import Opportunity, Watch, InternalNote, OpportunityType, OpportunityStatus
+from ..models import Opportunity, Watch, InternalNote, OpportunityType, OpportunityStatus, OpportunityRespondent
 from ..schemas import (
     OpportunityDetail, OpportunityListItem, OpportunityListResponse,
     InternalNoteIn, InternalNoteOut, StatusUpdateOut,
+    OpportunityRespondentOut, SupplierOut, SupplierDetailOut, SupplierDetailOpportunity
 )
 from .deps import current_user_id
 
@@ -85,6 +86,7 @@ def get_opportunity(document_no: str, db: Session = Depends(get_db), user_id: st
     d["is_watched"] = is_watched
     d["status_updates"] = [StatusUpdateOut.model_validate(s).model_dump() for s in opp.status_updates]
     d["notes"] = [InternalNoteOut.model_validate(n).model_dump() for n in opp.notes]
+    d["respondents"] = [OpportunityRespondentOut.model_validate(r).model_dump() for r in opp.respondents]
     return OpportunityDetail(**d)
 
 
@@ -119,3 +121,66 @@ def add_note(document_no: str, body: InternalNoteIn, db: Session = Depends(get_d
 def list_agencies(db: Session = Depends(get_db)):
     rows = db.query(Opportunity.agency).filter(Opportunity.agency.isnot(None)).distinct().all()
     return sorted(r[0] for r in rows)
+
+
+@router.get("/meta/suppliers", response_model=list[SupplierOut])
+def list_suppliers(q: Optional[str] = None, db: Session = Depends(get_db)):
+    query = db.query(
+        OpportunityRespondent.supplier_name,
+        func.count(OpportunityRespondent.id).label("total_bids"),
+        func.sum(case((OpportunityRespondent.is_awarded == True, 1), else_=0)).label("total_awards"),
+        func.sum(case((OpportunityRespondent.is_awarded == True, OpportunityRespondent.amount), else_=0)).label("total_award_amount")
+    ).group_by(OpportunityRespondent.supplier_name)
+    
+    if q:
+        query = query.filter(OpportunityRespondent.supplier_name.ilike(f"%{q}%"))
+        
+    rows = query.order_by(
+        func.sum(case((OpportunityRespondent.is_awarded == True, 1), else_=0)).desc(),
+        OpportunityRespondent.supplier_name
+    ).all()
+    
+    suppliers = []
+    for r in rows:
+        suppliers.append(SupplierOut(
+            supplier_name=r.supplier_name,
+            total_bids=r.total_bids or 0,
+            total_awards=r.total_awards or 0,
+            total_award_amount=float(r.total_award_amount or 0.0)
+        ))
+    return suppliers
+
+
+@router.get("/meta/suppliers/{name}", response_model=SupplierDetailOut)
+def get_supplier(name: str, db: Session = Depends(get_db)):
+    resps = db.query(OpportunityRespondent).filter(OpportunityRespondent.supplier_name == name).all()
+    if not resps:
+        raise HTTPException(404, "Supplier not found")
+        
+    bids = []
+    total_bids = len(resps)
+    total_awards = 0
+    total_award_amount = 0.0
+    
+    for r in resps:
+        opp = r.opportunity
+        if r.is_awarded:
+            total_awards += 1
+            total_award_amount += (r.amount or 0.0)
+            
+        bids.append(SupplierDetailOpportunity(
+            document_no=opp.document_no,
+            description=opp.description,
+            status=opp.status,
+            published_date=opp.published_date,
+            amount=r.amount,
+            is_awarded=r.is_awarded
+        ))
+        
+    return SupplierDetailOut(
+        supplier_name=name,
+        total_bids=total_bids,
+        total_awards=total_awards,
+        total_award_amount=total_award_amount,
+        bids=bids
+    )

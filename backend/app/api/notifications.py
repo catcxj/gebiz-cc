@@ -16,7 +16,7 @@ router = APIRouter(tags=["notifications"])
 def get_rule(db: Session = Depends(get_db), user_id: str = Depends(current_user_id)):
     rule = db.query(NotificationRule).filter(NotificationRule.user_id == user_id).one_or_none()
     if rule is None:
-        rule = NotificationRule(user_id=user_id, keywords=[], countdown_days=[3, 1])
+        rule = NotificationRule(user_id=user_id, keywords=[], agencies=[], categories=[], countdown_days=[3, 1])
         db.add(rule)
         db.commit()
         db.refresh(rule)
@@ -30,6 +30,8 @@ def put_rule(body: NotificationRuleIn, db: Session = Depends(get_db), user_id: s
         rule = NotificationRule(user_id=user_id)
         db.add(rule)
     rule.keywords = body.keywords
+    rule.agencies = body.agencies
+    rule.categories = body.categories
     rule.countdown_days = body.countdown_days
     rule.channel_in_app = body.channel_in_app
     rule.channel_email = body.channel_email

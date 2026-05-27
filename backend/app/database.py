@@ -22,5 +22,27 @@ def get_db():
 
 
 def init_db():
-    from . import models  # noqa: F401 — register mappers
+    from . import models  # noqa: F401
+    from sqlalchemy import inspect, text
+    
+    # 1. Create tables (new tables will be created automatically)
     Base.metadata.create_all(bind=engine)
+    
+    # 2. Schema migration: Add missing columns if database already exists
+    with engine.connect() as conn:
+        inspector = inspect(engine)
+        
+        # Check 'opportunities' table columns
+        opp_columns = [col["name"] for col in inspector.get_columns("opportunities")]
+        if "reference_no" not in opp_columns:
+            conn.execute(text("ALTER TABLE opportunities ADD COLUMN reference_no VARCHAR(64)"))
+            conn.commit()
+            
+        # Check 'notification_rules' table columns
+        rule_columns = [col["name"] for col in inspector.get_columns("notification_rules")]
+        if "agencies" not in rule_columns:
+            conn.execute(text("ALTER TABLE notification_rules ADD COLUMN agencies JSON DEFAULT '[]'"))
+            conn.commit()
+        if "categories" not in rule_columns:
+            conn.execute(text("ALTER TABLE notification_rules ADD COLUMN categories JSON DEFAULT '[]'"))
+            conn.commit()

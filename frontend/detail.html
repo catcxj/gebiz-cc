@@ -10,6 +10,7 @@
   <h1>GeBIZ Monitor</h1>
   <nav>
     <a href="/">← Back to Dashboard</a>
+    <a href="/suppliers.html">Supplier Master</a>
     <a href="/settings.html">Notification Settings</a>
   </nav>
 </header>
@@ -24,6 +25,7 @@ import { api, fmtDate, fmtDateOnly, statusPill } from "/static/app.js";
 const doc = new URLSearchParams(location.search).get("doc");
 const $ = (s) => document.querySelector(s);
 const escapeHTML = (s) => (s || "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" }[c]));
+const fmtCurrency = (val) => val === null || val === undefined ? "—" : new Intl.NumberFormat('en-SG', { style: 'currency', currency: 'SGD' }).format(val);
 
 async function load() {
   if (!doc) { $("#root").textContent = "No document_no in URL."; return; }
@@ -42,6 +44,7 @@ async function load() {
         <h2>Official Data</h2>
         <dl class="kv">
           <dt>Document No.</dt><dd>${escapeHTML(o.document_no)}</dd>
+          <dt>Reference No.</dt><dd style="font-family:monospace; font-size:13px; font-weight:bold;">${escapeHTML(o.reference_no || "—")}</dd>
           <dt>Type</dt><dd>${escapeHTML(o.opportunity_type || "—")}</dd>
           <dt>Agency</dt><dd>${escapeHTML(o.agency || "—")}</dd>
           <dt>Category</dt><dd>${escapeHTML(o.procurement_category || "—")}</dd>
@@ -50,15 +53,38 @@ async function load() {
           <dt>Closing</dt><dd>${fmtDate(o.closing_at)}</dd>
           <dt>Contact</dt><dd>${escapeHTML(o.contact_person || "—")}</dd>
           <dt>Source</dt><dd>${o.source_url ? `<a href="${o.source_url}" target="_blank" rel="noopener">GeBIZ</a>` : "—"}</dd>
-          ${o.award_details ? `<dt>Award</dt><dd><pre style="margin:0;font-size:12px">${escapeHTML(JSON.stringify(o.award_details, null, 2))}</pre></dd>` : ""}
+          ${o.award_details ? `<dt>Award</dt><dd><pre style="margin:0;font-size:12px;background:#f3f4f6;padding:8px;border-radius:4px;">${escapeHTML(JSON.stringify(o.award_details, null, 2))}</pre></dd>` : ""}
         </dl>
 
-        <h2 style="margin-top:24px;">Status Timeline</h2>
+        ${o.respondents && o.respondents.length ? `
+          <h2 style="margin-top:28px; font-size:15px; border-bottom:1px solid #eee; padding-bottom:6px;">Respondents & Bid Offers (${o.respondents.length})</h2>
+          <table style="width:100%; border-collapse:collapse; margin-top:8px; font-size:13px;">
+            <thead>
+              <tr style="background:#f9fafb;">
+                <th style="padding:6px 10px; font-size:11px;">Supplier Name</th>
+                <th style="padding:6px 10px; font-size:11px;">Bid Price</th>
+                <th style="padding:6px 10px; font-size:11px;">Result</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${o.respondents.map(r => `
+                <tr class="${r.is_awarded ? "bid-awarded" : ""}" style="background:${r.is_awarded ? '#ecfdf5' : 'transparent'}">
+                  <td style="padding:8px 10px; font-weight:600; color:#111827;"><a href="/suppliers.html" style="text-decoration:none; color:inherit;">${escapeHTML(r.supplier_name)}</a></td>
+                  <td style="padding:8px 10px; font-family:monospace; font-weight:bold;">${fmtCurrency(r.amount)}</td>
+                  <td style="padding:8px 10px; font-weight:bold; color:${r.is_awarded ? '#059669' : '#6b7280'}">
+                    ${r.is_awarded ? '🏆 Awarded' : 'Submitted'}
+                  </td>
+                </tr>
+              `).join("")}
+            </tbody>
+          </table>
+        ` : (o.status !== 'Open' ? '<h2 style="margin-top:28px; font-size:15px;">Respondents & Bid Offers</h2><p style="color:#9ca3af; font-size:13px; font-style:italic;">No respondents list recorded for this opportunity.</p>' : '')}
+
+        <h2 style="margin-top:28px; font-size:15px; border-bottom:1px solid #eee; padding-bottom:6px;">Status Timeline</h2>
         <ul class="timeline">
           ${(o.status_updates || []).map(s => `<li>${fmtDate(s.changed_at)} — <strong>${s.from_status || "∅"}</strong> → <strong>${s.to_status}</strong></li>`).join("") || `<li><i>No status changes recorded.</i></li>`}
         </ul>
       </div>
-
       <div class="card">
         <h2>Internal Notes</h2>
         <form id="note-form">

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import enum
 from datetime import datetime, date
-from sqlalchemy import String, Text, DateTime, Date, Enum, ForeignKey, JSON, Boolean, Integer
+from sqlalchemy import String, Text, DateTime, Date, Enum, ForeignKey, JSON, Boolean, Integer, Float
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from ..database import Base
@@ -30,6 +30,7 @@ class Opportunity(Base):
     __tablename__ = "opportunities"
 
     document_no: Mapped[str] = mapped_column(String(64), primary_key=True)
+    reference_no: Mapped[str | None] = mapped_column(String(64), nullable=True)
     opportunity_type: Mapped[OpportunityType | None] = mapped_column(Enum(OpportunityType), nullable=True)
     description: Mapped[str] = mapped_column(Text, default="")
     agency: Mapped[str | None] = mapped_column(String(128), index=True)
@@ -53,6 +54,22 @@ class Opportunity(Base):
     watches: Mapped[list["Watch"]] = relationship(
         back_populates="opportunity", cascade="all, delete-orphan"
     )
+    respondents: Mapped[list["OpportunityRespondent"]] = relationship(
+        back_populates="opportunity", cascade="all, delete-orphan", order_by="desc(OpportunityRespondent.amount)"
+    )
+
+
+class OpportunityRespondent(Base):
+    __tablename__ = "opportunity_respondents"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    document_no: Mapped[str] = mapped_column(ForeignKey("opportunities.document_no", ondelete="CASCADE"), index=True)
+    supplier_name: Mapped[str] = mapped_column(String(256), index=True)
+    amount: Mapped[float | None] = mapped_column(Float, nullable=True)
+    is_awarded: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    opportunity: Mapped[Opportunity] = relationship(back_populates="respondents")
 
 
 class StatusUpdate(Base):

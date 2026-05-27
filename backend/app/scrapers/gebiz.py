@@ -121,11 +121,58 @@ class GeBIZScraper(BaseScraper):
             source_url=f"https://www.gebiz.gov.sg{href}" if href.startswith("/") else href,
         )
 
+    async def enrich_opportunity(self, doc_no: str) -> Optional[ScrapedOpportunity]:
+        from playwright.async_api import async_playwright
+
+        log.info("enrich_opportunity: opening detail page for %s", doc_no)
+        item = ScrapedOpportunity(
+            document_no=doc_no,
+            status=OpportunityStatus.Open
+        )
+
+        async with async_playwright() as pw:
+            browser = await pw.chromium.launch(headless=self.headless)
+            ctx = await browser.new_context(
+                locale="en-SG",
+                user_agent=(
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                    "(KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36"
+                ),
+            )
+            try:
+                await self._enrich_detail_with_retry(ctx, item)
+            except Exception:
+                log.exception("enrich_opportunity failed for %s", doc_no)
+                return None
+            finally:
+                await browser.close()
+
+        return item
+
     async def _enrich_detail(self, ctx, item: ScrapedOpportunity) -> None:
-        """Open detail page and pull closing date / additional status signals."""
+        await self._enrich_detail_with_retry(ctx, item)
+
+    async def _enrich_detail_with_retry(self, ctx, item: ScrapedOpportunity) -> None:
+        """Open detail page and pull closing date / additional status signals, retrying if necessary."""
         page = await ctx.new_page()
+        max_retries = 3
+        url = self.DETAIL_URL_TMPL.format(doc=item.document_no)
+        
+        for attempt in range(max_retries):
+            try:
+                await page.goto(url, wait_until="networkidle", timeout=30000)
+                # Wait for main content form to verify it loaded successfully
+                await page.wait_for_selector(".form2_ROW-LABEL label span", timeout=10000)
+                break
+            except Exception as e:
+                log.warning("Attempt %d to load detail page failed: %s", attempt + 1, e)
+                if attempt == max_retries - 1:
+                    await page.close()
+                    raise e
+                await page.wait_for_timeout(2000)
+
         try:
-            await page.goto(self.DETAIL_URL_TMPL.format(doc=item.document_no), wait_until="networkidle", timeout=45000)
+            # 1. Parse official key-value pairs
             data = await page.evaluate(
                 """() => {
                   const labs = [...document.querySelectorAll('.form2_ROW-LABEL label span')].map(e => (e.innerText||'').trim());
@@ -135,18 +182,94 @@ class GeBIZScraper(BaseScraper):
                   return m;
                 }"""
             )
-            # Labels vary by opportunity type; match a few common ones loosely.
+            
+            # 2. Extract Reference No.
+            for key in ("Tender Ref. No.", "Quotation Ref. No.", "Reference No.", "Ref No.", "Ref. No."):
+                if data.get(key):
+                    item.reference_no = data[key]
+                    break
+
+            # 3. Extract Closing date and time
             for key in ("Closing Date", "Closing Date & Time", "Closing Date and Time"):
                 if data.get(key):
-                    item.closing_at = _parse_dt(data[key])
+                    item.closing_at = _parse_dt(data[key]) or item.closing_at
                     break
+
+            # 4. Extract Status
             for key in ("Status", "Tender Status", "Quotation Status"):
                 if data.get(key):
                     item.status = _map_status(data[key]) or item.status
                     break
+
             contact = data.get("Contact Person") or data.get("Enquiry")
             if contact:
                 item.contact_person = contact
+
+            # 5. Parse respondents list and bids if not Open
+            if item.status != OpportunityStatus.Open:
+                respondents_data = await page.evaluate(
+                    """() => {
+                      const list = [];
+                      const tables = [...document.querySelectorAll('table')];
+                      for (const table of tables) {
+                          const headers = [...table.querySelectorAll('th')].map(h => (h.innerText||'').trim().toLowerCase());
+                          const nameIdx = headers.findIndex(h => h.includes('supplier') || h.includes('name of') || h.includes('respondent') || h.includes('tenderer') || h.includes('company'));
+                          const priceIdx = headers.findIndex(h => h.includes('amount') || h.includes('price') || h.includes('offer') || h.includes('evaluated') || h.includes('value'));
+                          
+                          if (nameIdx !== -1) {
+                              const rows = [...table.querySelectorAll('tbody tr')];
+                              for (const row of rows) {
+                                  const cells = [...row.querySelectorAll('td')].map(c => (c.innerText||'').trim());
+                                  if (cells.length > nameIdx && cells[nameIdx]) {
+                                      const supplierName = cells[nameIdx];
+                                      let amount = null;
+                                      if (priceIdx !== -1 && cells.length > priceIdx) {
+                                          const cleanPrice = cells[priceIdx].replace(/[^0-9.]/g, '');
+                                          if (cleanPrice) amount = parseFloat(cleanPrice);
+                                      }
+                                      list.push({
+                                          supplier_name: supplierName,
+                                          amount: amount,
+                                          is_awarded: false
+                                      });
+                                  }
+                              }
+                          }
+                      }
+                      return list;
+                    }"""
+                )
+                
+                # Check for awarded supplier details in the main key-values
+                awarded_supplier = None
+                award_amount = None
+                for key, val in data.items():
+                    k_low = key.lower()
+                    if "awarded supplier" in k_low or "awardee" in k_low or "awarded to" in k_low:
+                        awarded_supplier = val
+                    if "award amount" in k_low or "awarded amount" in k_low or "award value" in k_low:
+                        try:
+                            clean_price = re.sub(r"[^0-9.]", "", val)
+                            if clean_price:
+                                award_amount = float(clean_price)
+                        except Exception:
+                            pass
+                
+                # If awarded details exist, record them
+                if awarded_supplier:
+                    item.award_details = {
+                        "supplier_name": awarded_supplier,
+                        "amount": award_amount,
+                        "awarded_date": datetime.now().date().isoformat()
+                    }
+                    # Mark in respondents
+                    for resp in respondents_data:
+                        if resp["supplier_name"].lower() == awarded_supplier.lower():
+                            resp["is_awarded"] = True
+                            if award_amount and not resp["amount"]:
+                                resp["amount"] = award_amount
+
+                item.respondents = respondents_data
         finally:
             await page.close()
 

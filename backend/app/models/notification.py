@@ -21,6 +21,8 @@ class NotificationRule(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id: Mapped[str] = mapped_column(String(64), default="default", unique=True, index=True)
     keywords: Mapped[list] = mapped_column(JSON, default=list)            # ["LTA", "Construction", ...]
+    agencies: Mapped[list] = mapped_column(JSON, default=list)            # ["LTA", "GovTech", ...]
+    categories: Mapped[list] = mapped_column(JSON, default=list)          # ["Services", "Goods", ...]
     countdown_days: Mapped[list] = mapped_column(JSON, default=list)      # [3, 1]
     channel_in_app: Mapped[bool] = mapped_column(Boolean, default=True)
     channel_email: Mapped[bool] = mapped_column(Boolean, default=False)

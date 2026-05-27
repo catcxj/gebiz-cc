@@ -1,0 +1,312 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>GeBIZ Monitor — Supplier Master</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+  <style>
+    /* Ultra-premium master-detail layout */
+    .supplier-grid {
+      display: grid;
+      grid-template-columns: 380px 1fr;
+      gap: 20px;
+      margin-top: 16px;
+      height: calc(100vh - 140px);
+    }
+    
+    .supplier-list-card {
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+      overflow: hidden;
+    }
+    
+    .supplier-search-box {
+      padding: 12px;
+      border-bottom: 1px solid #e5e7eb;
+      background: #fafafa;
+    }
+    
+    .supplier-search-box input {
+      width: 100%;
+      padding: 8px 12px;
+      border: 1px solid #d1d5db;
+      border-radius: 6px;
+      font-size: 14px;
+      outline: none;
+      transition: all 0.2s;
+    }
+    
+    .supplier-search-box input:focus {
+      border-color: #1e40af;
+      box-shadow: 0 0 0 3px rgba(30, 64, 175, 0.15);
+    }
+    
+    .supplier-scroll-area {
+      flex: 1;
+      overflow-y: auto;
+    }
+    
+    .supplier-item {
+      padding: 14px 16px;
+      border-bottom: 1px solid #f3f4f6;
+      cursor: pointer;
+      transition: all 0.2s;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    
+    .supplier-item:hover {
+      background: #f3f4f6;
+    }
+    
+    .supplier-item.active {
+      background: #eff6ff;
+      border-left: 4px solid #1e40af;
+      padding-left: 12px;
+    }
+    
+    .supplier-name {
+      font-weight: 600;
+      font-size: 14px;
+      color: #111827;
+      word-break: break-all;
+    }
+    
+    .supplier-stats-row {
+      display: flex;
+      gap: 12px;
+      font-size: 12px;
+      color: #6b7280;
+    }
+    
+    .stat-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 3px;
+    }
+    
+    .stat-badge.award {
+      color: #047857;
+      font-weight: 600;
+    }
+    
+    .supplier-detail-card {
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+      overflow-y: auto;
+    }
+    
+    .detail-header {
+      border-bottom: 1px solid #e5e7eb;
+      padding-bottom: 16px;
+      margin-bottom: 16px;
+    }
+    
+    .detail-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+    
+    .detail-stat-box {
+      background: #f9fafb;
+      padding: 16px;
+      border-radius: 8px;
+      border: 1px solid #f3f4f6;
+      text-align: center;
+    }
+    
+    .detail-stat-val {
+      font-size: 24px;
+      font-weight: 700;
+      color: #1e40af;
+      margin-top: 4px;
+    }
+    
+    .detail-stat-val.awards {
+      color: #059669;
+    }
+    
+    .detail-stat-val.amount {
+      color: #b45309;
+    }
+    
+    .detail-stat-label {
+      font-size: 12px;
+      color: #6b7280;
+      text-transform: uppercase;
+      font-weight: 600;
+    }
+    
+    /* Highlight awarded bids */
+    tr.bid-awarded {
+      background: #ecfdf5 !important;
+    }
+    
+    tr.bid-awarded:hover {
+      background: #d1fae5 !important;
+    }
+    
+    .medal-icon {
+      color: #fbbf24;
+      font-weight: bold;
+      margin-right: 4px;
+    }
+  </style>
+</head>
+<body>
+<header>
+  <h1>GeBIZ Monitor</h1>
+  <nav>
+    <a href="/">Dashboard</a>
+    <a href="/suppliers.html" style="font-weight: bold; opacity: 1;">Supplier Master</a>
+    <a href="/settings.html">Notification Settings</a>
+  </nav>
+</header>
+
+<main style="padding: 16px; max-width: 1500px;">
+  <div class="supplier-grid">
+    <!-- Left panel: List & Search -->
+    <div class="card supplier-list-card" style="padding: 0;">
+      <div class="supplier-search-box">
+        <input type="text" id="supplier-search" placeholder="Search supplier name..." />
+      </div>
+      <div class="supplier-scroll-area" id="supplier-list">
+        <div class="empty">Loading suppliers…</div>
+      </div>
+    </div>
+    
+    <!-- Right panel: Supplier bid history details -->
+    <div class="card supplier-detail-card" id="supplier-detail-panel">
+      <div class="empty" style="margin-top: 100px;">
+        <span style="font-size: 48px; display: block; margin-bottom: 12px;">🏢</span>
+        Select a supplier from the list to view their full bidding and award history.
+      </div>
+    </div>
+  </div>
+</main>
+
+<script type="module">
+  import { api, fmtDate, fmtDateOnly, statusPill } from "/static/app.js";
+
+  const $ = (s) => document.querySelector(s);
+  const escapeHTML = (s) => (s || "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" }[c]));
+  const fmtCurrency = (val) => val === null || val === undefined ? "—" : new Intl.NumberFormat('en-SG', { style: 'currency', currency: 'SGD' }).format(val);
+
+  let currentSuppliers = [];
+  let selectedSupplierName = null;
+
+  async function loadSuppliers(query = "") {
+    const listArea = $("#supplier-list");
+    try {
+      const url = "/opportunities/meta/suppliers" + (query ? `?q=${encodeURIComponent(query)}` : "");
+      currentSuppliers = await api(url);
+      
+      if (!currentSuppliers.length) {
+        listArea.innerHTML = `<div class="empty">No suppliers found.</div>`;
+        return;
+      }
+      
+      listArea.innerHTML = currentSuppliers.map(s => `
+        <div class="supplier-item ${selectedSupplierName === s.supplier_name ? "active" : ""}" data-name="${escapeHTML(s.supplier_name)}">
+          <div class="supplier-name">${escapeHTML(s.supplier_name)}</div>
+          <div class="supplier-stats-row">
+            <span class="stat-badge">📝 Bids: <strong>${s.total_bids}</strong></span>
+            <span class="stat-badge award">🏆 Awards: <strong>${s.total_awards}</strong></span>
+            <span>💰 ${fmtCurrency(s.total_award_amount)}</span>
+          </div>
+        </div>
+      `).join("");
+      
+      listArea.querySelectorAll(".supplier-item").forEach(el => {
+        el.addEventListener("click", () => {
+          listArea.querySelectorAll(".supplier-item").forEach(item => item.classList.remove("active"));
+          el.classList.add("active");
+          selectSupplier(el.dataset.name);
+        });
+      });
+      
+      // Auto-select first supplier if none selected and suppliers exist
+      if (!selectedSupplierName && currentSuppliers.length > 0) {
+        selectSupplier(currentSuppliers[0].supplier_name);
+        listArea.querySelector(".supplier-item")?.classList.add("active");
+      }
+    } catch (e) {
+      listArea.innerHTML = `<div class="empty" style="color:red">Failed to load suppliers.</div>`;
+    }
+  }
+
+  async function selectSupplier(name) {
+    selectedSupplierName = name;
+    const detailPanel = $("#supplier-detail-panel");
+    detailPanel.innerHTML = `<div class="empty" style="margin-top: 100px;">Loading details for ${escapeHTML(name)}…</div>`;
+    
+    try {
+      const data = await api(`/opportunities/meta/suppliers/${encodeURIComponent(name)}`);
+      
+      detailPanel.innerHTML = `
+        <div class="detail-header">
+          <h2 style="margin: 0 0 4px 0; font-size: 22px; color: #111827;">${escapeHTML(data.supplier_name)}</h2>
+          <span style="color: #6b7280; font-size: 13px;">Supplier Profile & Bid Offers History</span>
+        </div>
+        
+        <div class="detail-grid">
+          <div class="detail-stat-box">
+            <div class="detail-stat-label">Total Submissions</div>
+            <div class="detail-stat-val">${data.total_bids}</div>
+          </div>
+          <div class="detail-stat-box">
+            <div class="detail-stat-label">Successful Awards</div>
+            <div class="detail-stat-val awards">🏆 ${data.total_awards}</div>
+          </div>
+          <div class="detail-stat-box">
+            <div class="detail-stat-label">Total Award Value</div>
+            <div class="detail-stat-val amount">${fmtCurrency(data.total_award_amount)}</div>
+          </div>
+        </div>
+        
+        <h3 style="font-size: 16px; margin: 24px 0 12px 0; font-weight: 600;">Participated Opportunities</h3>
+        
+        <table>
+          <thead>
+            <tr>
+              <th>Doc No.</th>
+              <th>Description</th>
+              <th>Status</th>
+              <th>Bid Price</th>
+              <th>Outcome</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${data.bids.map(b => `
+              <tr class="${b.is_awarded ? "bid-awarded" : ""}">
+                <td style="font-weight: 500;"><a href="/detail.html?doc=${encodeURIComponent(b.document_no)}">${escapeHTML(b.document_no)}</a></td>
+                <td><a href="/detail.html?doc=${encodeURIComponent(b.document_no)}">${escapeHTML(b.description)}</a></td>
+                <td>${statusPill(b.status)}</td>
+                <td style="font-weight: 500;">${fmtCurrency(b.amount)}</td>
+                <td style="font-weight: 600; color: ${b.is_awarded ? '#059669' : '#6b7280'}">
+                  ${b.is_awarded ? '<span class="medal-icon">★</span>Awarded' : 'Submitted'}
+                </td>
+              </tr>
+            `).join("")}
+          </tbody>
+        </table>
+      `;
+    } catch (e) {
+      detailPanel.innerHTML = `<div class="empty" style="color:red">Failed to load supplier details.</div>`;
+    }
+  }
+
+  // Real-time search handler
+  $("#supplier-search").addEventListener("input", (e) => {
+    loadSuppliers(e.target.value.trim());
+  });
+
+  loadSuppliers();
+</script>
+</body>
+</html>

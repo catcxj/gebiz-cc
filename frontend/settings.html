@@ -22,7 +22,21 @@
         <label>Keywords</label>
         <input type="text" name="keywords" placeholder="LTA, Construction, BIM, Software, Marketing" />
       </div>
-      <small style="color:#6b7280;">Comma-separated. Case-insensitive substring match on description or agency.</small>
+      <small style="color:#6b7280; display:block; margin-bottom:16px;">Comma-separated. Case-insensitive substring match on description or agency.</small>
+
+      <h3 style="font-size:14px; margin-top:16px;">Preferred Agencies</h3>
+      <div class="row">
+        <label>Agencies</label>
+        <input type="text" name="agencies" placeholder="LTA, GovTech, MOE, URA" />
+      </div>
+      <small style="color:#6b7280; display:block; margin-bottom:16px;">Comma-separated. Case-insensitive matches published agency name.</small>
+
+      <h3 style="font-size:14px; margin-top:16px;">Preferred Categories</h3>
+      <div class="row">
+        <label>Categories</label>
+        <input type="text" name="categories" placeholder="Services, Goods, Construction" />
+      </div>
+      <small style="color:#6b7280; display:block; margin-bottom:16px;">Comma-separated. Matches procurement category.</small>
 
       <h3 style="font-size:14px; margin-top:24px;">Closing-Date Countdown</h3>
       <div class="row">
@@ -61,6 +75,8 @@ const form = $("#rule-form");
 
 function applyRule(r) {
   form.keywords.value = (r.keywords || []).join(", ");
+  form.agencies.value = (r.agencies || []).join(", ");
+  form.categories.value = (r.categories || []).join(", ");
   form.d7.checked = r.countdown_days.includes(7);
   form.d3.checked = r.countdown_days.includes(3);
   form.d1.checked = r.countdown_days.includes(1);
@@ -79,6 +95,8 @@ form.addEventListener("submit", async (e) => {
   e.preventDefault();
   const body = {
     keywords: form.keywords.value.split(",").map(s => s.trim()).filter(Boolean),
+    agencies: form.agencies.value.split(",").map(s => s.trim()).filter(Boolean),
+    categories: form.categories.value.split(",").map(s => s.trim()).filter(Boolean),
     countdown_days: [7, 3, 1].filter(d => form[`d${d}`].checked),
     channel_in_app: true,
     channel_email: form.channel_email.checked,

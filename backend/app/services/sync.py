@@ -7,7 +7,7 @@ from datetime import datetime
 from sqlalchemy.orm import Session
 
 from ..database import SessionLocal
-from ..models import Opportunity, StatusUpdate, ScrapeLog, NotificationType, Watch
+from ..models import Opportunity, StatusUpdate, ScrapeLog, NotificationType, Watch, OpportunityStatus, OpportunityRespondent
 from ..notifications import dispatch, NotificationPayload
 from ..scrapers import ScrapedOpportunity, get_scraper
 from .alerts import match_keywords, list_users_with_rules
@@ -25,6 +25,7 @@ class SyncResult:
 async def run_sync() -> SyncResult:
     """
     One scrape run: fetch all items, upsert, diff status, emit notifications.
+    Then enrich active opportunities in the database.
     """
     db: Session = SessionLocal()
     log_row = ScrapeLog(started_at=datetime.utcnow(), status="running")
@@ -34,6 +35,7 @@ async def run_sync() -> SyncResult:
 
     new = updated = changes = 0
     try:
+        # 1. Fetch listing and upsert
         scraper = get_scraper()
         async for item in scraper.fetch():
             created, status_changed = _upsert(db, item)
@@ -45,6 +47,24 @@ async def run_sync() -> SyncResult:
                 if status_changed:
                     changes += 1
                     _notify_status_changed(db, item)
+
+        # 2. Enrich active/non-final opportunities in the database
+        active_opps = db.query(Opportunity).filter(
+            Opportunity.status.in_([OpportunityStatus.Open, OpportunityStatus.Closed, OpportunityStatus.PendingAward])
+        ).all()
+        log.info("sync: enriching %d active opportunities", len(active_opps))
+        
+        for opp in active_opps:
+            try:
+                enriched = await scraper.enrich_opportunity(opp.document_no)
+                if enriched:
+                    _, status_changed = _upsert(db, enriched)
+                    if status_changed:
+                        changes += 1
+                        _notify_status_changed(db, enriched)
+            except Exception:
+                log.exception("failed to enrich active opportunity %s", opp.document_no)
+
         db.commit()
         log_row.items_new = new
         log_row.items_updated = updated
@@ -68,8 +88,9 @@ async def run_sync() -> SyncResult:
 def _upsert(db: Session, item: ScrapedOpportunity) -> tuple[bool, bool]:
     existing = db.get(Opportunity, item.document_no)
     if existing is None:
-        db.add(Opportunity(
+        new_opp = Opportunity(
             document_no=item.document_no,
+            reference_no=item.reference_no,
             opportunity_type=item.opportunity_type,
             description=item.description,
             agency=item.agency,
@@ -80,7 +101,18 @@ def _upsert(db: Session, item: ScrapedOpportunity) -> tuple[bool, bool]:
             contact_person=item.contact_person,
             award_details=item.award_details,
             source_url=item.source_url,
-        ))
+        )
+        db.add(new_opp)
+        
+        # Add respondents
+        if item.respondents:
+            for r in item.respondents:
+                db.add(OpportunityRespondent(
+                    document_no=item.document_no,
+                    supplier_name=r["supplier_name"],
+                    amount=r["amount"],
+                    is_awarded=r["is_awarded"]
+                ))
         return True, False
 
     status_changed = existing.status != item.status
@@ -91,6 +123,7 @@ def _upsert(db: Session, item: ScrapedOpportunity) -> tuple[bool, bool]:
             to_status=item.status,
         ))
 
+    existing.reference_no = item.reference_no or existing.reference_no
     existing.opportunity_type = item.opportunity_type or existing.opportunity_type
     existing.description = item.description or existing.description
     existing.agency = item.agency or existing.agency
@@ -101,12 +134,41 @@ def _upsert(db: Session, item: ScrapedOpportunity) -> tuple[bool, bool]:
     existing.contact_person = item.contact_person or existing.contact_person
     existing.award_details = item.award_details or existing.award_details
     existing.source_url = item.source_url or existing.source_url
+    
+    # Update respondents: delete existing and write new ones
+    if item.respondents:
+        db.query(OpportunityRespondent).filter(OpportunityRespondent.document_no == existing.document_no).delete()
+        for r in item.respondents:
+            db.add(OpportunityRespondent(
+                document_no=existing.document_no,
+                supplier_name=r["supplier_name"],
+                amount=r["amount"],
+                is_awarded=r["is_awarded"]
+            ))
     return False, status_changed
 
 
 def _notify_if_match(db: Session, item: ScrapedOpportunity) -> None:
     for user_id, rule in list_users_with_rules(db):
-        if match_keywords(item.description, rule.keywords) or match_keywords(item.agency or "", rule.keywords):
+        match = False
+        
+        # 1. Match keywords (description or agency)
+        if rule.keywords and (match_keywords(item.description, rule.keywords) or match_keywords(item.agency or "", rule.keywords)):
+            match = True
+            
+        # 2. Match agencies
+        rule_agencies = getattr(rule, "agencies", [])
+        if not match and rule_agencies and item.agency:
+            if any(a.strip().lower() in item.agency.lower() for a in rule_agencies if a.strip()):
+                match = True
+                
+        # 3. Match categories
+        rule_categories = getattr(rule, "categories", [])
+        if not match and rule_categories and item.procurement_category:
+            if any(c.strip().lower() in item.procurement_category.lower() for c in rule_categories if c.strip()):
+                match = True
+                
+        if match:
             dispatch(db, user_id, NotificationPayload(
                 type=NotificationType.NewMatch,
                 title=f"[新商机] {item.document_no}",
