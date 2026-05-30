@@ -4,6 +4,7 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime
 
+from sqlalchemy import or_, and_
 from sqlalchemy.orm import Session
 
 from ..database import SessionLocal
@@ -51,9 +52,15 @@ async def run_sync() -> SyncResult:
         # Commit listing phase results immediately so users see newly scraped list data in the UI
         db.commit()
 
-        # 2. Enrich active/non-final opportunities in the database
+        # 2. Enrich active/non-final opportunities, plus Awarded opportunities that haven't been enriched yet
         active_opps = db.query(Opportunity).filter(
-            Opportunity.status.in_([OpportunityStatus.Open, OpportunityStatus.Closed, OpportunityStatus.PendingAward])
+            or_(
+                Opportunity.status.in_([OpportunityStatus.Open, OpportunityStatus.Closed, OpportunityStatus.PendingAward]),
+                and_(
+                    Opportunity.status == OpportunityStatus.Awarded,
+                    Opportunity.award_details.is_(None)
+                )
+            )
         ).all()
         log.info("sync: enriching %d active opportunities", len(active_opps))
         
