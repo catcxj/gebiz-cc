@@ -20,7 +20,7 @@
 </main>
 
 <script type="module">
-import { api, fmtDate, fmtDateOnly, statusPill } from "/static/app.js";
+import { api, fmtDate, fmtDateOnly, statusPill, daysUntil } from "/static/app.js";
 
 const doc = new URLSearchParams(location.search).get("doc");
 const $ = (s) => document.querySelector(s);
@@ -50,7 +50,18 @@ async function load() {
           <dt>Category</dt><dd>${escapeHTML(o.procurement_category || "—")}</dd>
           <dt>Status</dt><dd>${statusPill(o.status)}</dd>
           <dt>Published</dt><dd>${fmtDateOnly(o.published_date)}</dd>
-          <dt>Closing</dt><dd>${fmtDate(o.closing_at)}</dd>
+          <dt>Closing</dt>
+          <dd>
+            ${o.closing_at ? (() => {
+              const d = daysUntil(o.closing_at);
+              const isPast = new Date(o.closing_at) < new Date();
+              if (isPast) {
+                return `${fmtDate(o.closing_at)} <span class="closing-pill state-closed" style="margin-left:8px;">Closed</span>`;
+              } else {
+                return `${fmtDate(o.closing_at)} <span class="closing-pill state-closing" style="margin-left:8px;">Closing</span>${d !== null && d >= 0 ? ` <span style="font-size:12px; color:#2563eb; font-weight:600; margin-left:4px;">(${d}d left)</span>` : ""}`;
+              }
+            })() : "—"}
+          </dd>
           <dt>Contact</dt><dd>${escapeHTML(o.contact_person || "—")}</dd>
           <dt>Source</dt><dd>${o.source_url ? `<a href="${o.source_url}" target="_blank" rel="noopener">GeBIZ</a>` : "—"}</dd>
           ${o.award_details ? `<dt>Award</dt><dd><pre style="margin:0;font-size:12px;background:#f3f4f6;padding:8px;border-radius:4px;">${escapeHTML(JSON.stringify(o.award_details, null, 2))}</pre></dd>` : ""}

@@ -52,6 +52,11 @@
     <button id="prev">Prev</button>
     <span id="page"></span>
     <button id="next">Next</button>
+    <span class="jump-wrap" style="margin-left: 8px; display: inline-flex; align-items: center; gap: 6px; font-size: 14px; color: #4b5563;">
+      <span>| &nbsp; Go to</span>
+      <input type="number" id="jump-page" min="1" style="width: 50px; padding: 5px; border: 1px solid #d1d5db; border-radius: 4px; font-size: 13px; text-align: center;" />
+      <button id="btn-jump">Go</button>
+    </span>
   </div>
 </main>
 
@@ -83,10 +88,18 @@ async function load() {
   const data = await api("/opportunities" + qs({ ...filters, page: state.page, size: state.size }));
   state.total = data.total;
   renderList(data.items);
+  
+  const totalPages = Math.max(1, Math.ceil(data.total / state.size));
   $("#total").textContent = `${data.total} result(s)`;
-  $("#page").textContent = `page ${state.page} / ${Math.max(1, Math.ceil(data.total / state.size))}`;
+  $("#page").textContent = `page ${state.page} / ${totalPages}`;
   $("#prev").disabled = state.page <= 1;
   $("#next").disabled = state.page * state.size >= data.total;
+  
+  const jumpInput = $("#jump-page");
+  if (jumpInput) {
+    jumpInput.max = totalPages;
+    jumpInput.value = state.page;
+  }
 }
 
 function renderList(items) {
@@ -94,6 +107,26 @@ function renderList(items) {
   const rows = items.map(o => {
     const d = daysUntil(o.closing_at);
     const closingSoon = d !== null && d >= 0 && d <= 3;
+    
+    let closingHtml = "—";
+    if (o.closing_at) {
+      const isPast = new Date(o.closing_at) < new Date();
+      if (isPast) {
+        closingHtml = `<div style="display:flex; flex-direction:column; gap:4px;">
+          <span>${fmtDate(o.closing_at)}</span>
+          <div><span class="closing-pill state-closed">Closed</span></div>
+        </div>`;
+      } else {
+        closingHtml = `<div style="display:flex; flex-direction:column; gap:4px;">
+          <span style="font-weight:500;">${fmtDate(o.closing_at)}</span>
+          <div>
+            <span class="closing-pill state-closing">Closing</span>
+            ${d !== null && d >= 0 ? `<small style="color:#2563eb; font-weight:600; margin-left:4px;">(${d}d)</small>` : ""}
+          </div>
+        </div>`;
+      }
+    }
+
     return `<tr class="${closingSoon ? "row-closing" : ""}">
       <td><span class="star ${o.is_watched ? "active" : ""}" data-doc="${o.document_no}">${o.is_watched ? "★" : "☆"}</span></td>
       <td><a href="/detail.html?doc=${encodeURIComponent(o.document_no)}">${o.document_no}</a></td>
@@ -103,7 +136,7 @@ function renderList(items) {
       <td><a href="/detail.html?doc=${encodeURIComponent(o.document_no)}">${escapeHTML(o.description || "")}</a></td>
       <td>${statusPill(o.status)}</td>
       <td>${fmtDateOnly(o.published_date)}</td>
-      <td>${fmtDate(o.closing_at)} ${d !== null && d >= 0 ? `<small>(${d}d)</small>` : ""}</td>
+      <td>${closingHtml}</td>
     </tr>`;
   }).join("");
   $("#list-wrap").innerHTML = `<table>
@@ -125,6 +158,27 @@ function escapeHTML(s) { return (s || "").replace(/[&<>"']/g, c => ({ "&": "&amp
 $("#filters").addEventListener("submit", (e) => { e.preventDefault(); state.page = 1; load(); });
 $("#prev").addEventListener("click", () => { if (state.page > 1) { state.page--; load(); }});
 $("#next").addEventListener("click", () => { state.page++; load(); });
+
+function handleJump() {
+  const jumpInput = $("#jump-page");
+  const val = parseInt(jumpInput.value, 10);
+  const totalPages = Math.max(1, Math.ceil(state.total / state.size));
+  if (isNaN(val) || val < 1 || val > totalPages) {
+    alert(`Please enter a valid page number between 1 and ${totalPages}.`);
+    jumpInput.value = state.page;
+    return;
+  }
+  state.page = val;
+  load();
+}
+$("#btn-jump").addEventListener("click", handleJump);
+$("#jump-page").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") {
+    e.preventDefault();
+    handleJump();
+  }
+});
+
 $("#btn-scrape").addEventListener("click", async () => { await api("/admin/scrape/trigger", { method: "POST" }); alert("Scrape started."); });
 
 async function refreshUnread() {

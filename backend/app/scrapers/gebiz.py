@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import re
 from datetime import datetime
-from typing import AsyncIterator
+from typing import AsyncIterator, Optional
 from urllib.parse import urlparse, parse_qs
 
 from .base import BaseScraper, ScrapedOpportunity
@@ -32,7 +32,7 @@ class GeBIZScraper(BaseScraper):
     DETAIL_URL_TMPL = (
         "https://www.gebiz.gov.sg/ptn/opportunity/directlink.xhtml?docCode={doc}"
     )
-    ROW_SELECTOR = "div.formColumns_COLUMN-TABLE"
+    ROW_SELECTOR = "div.row.formColumns_ROW-TABLE"
     TITLE_ANCHOR = "a.commandLink_TITLE-BLUE[href*='directlink']"
 
     def __init__(self, headless: bool = True, enrich_details: bool = False, enrich_limit: int = 20):
@@ -40,6 +40,41 @@ class GeBIZScraper(BaseScraper):
         # Enriching every item visits N detail pages; disabled by default for v1.
         self.enrich_details = enrich_details
         self.enrich_limit = enrich_limit
+
+    async def _parse_visible_rows(self, page) -> list[dict]:
+        return await page.eval_on_selector_all(
+            self.ROW_SELECTOR,
+            """
+            rows => rows
+              .filter(r => r.querySelector("a[href*='directlink']"))
+              .map(r => {
+                const a = r.querySelector("a[href*='directlink']");
+                const labels = [...r.querySelectorAll('.col-md-7 .form2_ROW-LABEL label span')].map(e => (e.innerText||'').trim());
+                const values = [...r.querySelectorAll('.col-md-7 .formOutputText_VALUE-DIV')].map(e => (e.innerText||'').trim());
+                const pairs = {};
+                for (let i = 0; i < Math.min(labels.length, values.length); i++) pairs[labels[i]] = values[i];
+                
+                // Robustly parse Closing on / Closed datetime from right column
+                const rightCol = r.querySelector('.outputText_LABEL-GRAY')?.closest('.formColumns_COLUMN-TABLE');
+                if (rightCol) {
+                    const rightText = (rightCol.innerText || '').trim();
+                    const lines = rightText.split('\\n').map(l => l.trim()).filter(Boolean);
+                    if (lines.length >= 3) {
+                        // lines[0] is "Closing on" or "Closed"
+                        // lines[1] is e.g. "05 Jun 2026"
+                        // lines[2] is e.g. "01:00PM"
+                        pairs[lines[0]] = lines[1] + " " + lines[2];
+                    }
+                }
+                
+                return {
+                  href: a.getAttribute('href'),
+                  title: (a.innerText||'').trim(),
+                  pairs,
+                };
+              })
+            """,
+        )
 
     async def fetch(self) -> AsyncIterator[ScrapedOpportunity]:
         from playwright.async_api import async_playwright
@@ -56,35 +91,79 @@ class GeBIZScraper(BaseScraper):
             )
             page = await ctx.new_page()
             await page.goto(self.LISTING_URL, wait_until="networkidle", timeout=45000)
+            
+            # Click the search "Go" button without keywords to display the Open/Closed tabs list
+            log.info("scrape: clicking Go button to fetch all opportunities search page")
+            try:
+                go_button = page.get_by_role("button", name="Go")
+                await go_button.wait_for(state="visible", timeout=10000)
+                await go_button.click()
+                await page.wait_for_timeout(3000) # Wait for page search results to update
+            except Exception as e:
+                log.error("Could not click Go button to load search results: %s", e)
+
             await page.wait_for_selector(self.TITLE_ANCHOR, timeout=15000)
 
-            raw_rows = await page.eval_on_selector_all(
-                self.ROW_SELECTOR,
-                """
-                rows => rows
-                  .filter(r => r.querySelector("a[href*='directlink']"))
-                  .map(r => {
-                    const a = r.querySelector("a[href*='directlink']");
-                    const labels = [...r.querySelectorAll('.form2_ROW-LABEL label span')].map(e => (e.innerText||'').trim());
-                    const values = [...r.querySelectorAll('.formOutputText_VALUE-DIV')].map(e => (e.innerText||'').trim());
-                    const pairs = {};
-                    for (let i = 0; i < Math.min(labels.length, values.length); i++) pairs[labels[i]] = values[i];
-                    return {
-                      href: a.getAttribute('href'),
-                      title: (a.innerText||'').trim(),
-                      pairs,
-                    };
-                  })
-                """,
-            )
-
             items: list[ScrapedOpportunity] = []
-            for r in raw_rows:
-                item = self._parse_row(r)
-                if item:
-                    items.append(item)
 
-            log.info("scrape: listing parsed %d items", len(items))
+            # 1. Scrape Open tab (default active tab)
+            try:
+                log.info("scrape: parsing Open tab")
+                raw_rows = await self._parse_visible_rows(page)
+                for r in raw_rows:
+                    item = self._parse_row(r)
+                    if item:
+                        item.status = OpportunityStatus.Open
+                        items.append(item)
+                log.info("scrape: Open tab parsed %d items", len(raw_rows))
+            except Exception as e:
+                log.exception("Failed to scrape Open tab")
+
+            # 2. Click Closed main tab
+            try:
+                log.info("scrape: selecting Closed main tab")
+                closed_main_tab = page.get_by_text(re.compile(r"Closed \(")).first
+                await closed_main_tab.click()
+                await page.wait_for_timeout(2000)
+            except Exception as e:
+                log.error("Could not click Closed main tab: %s", e)
+                closed_main_tab = None
+
+            # 3. Scrape Closed sub-tabs
+            if closed_main_tab:
+                sub_tabs = [
+                    ("Closed sub-tab", re.compile(r"Closed \("), 1, OpportunityStatus.Closed), # 2nd occurrence => nth(1)
+                    ("Pending Award", re.compile(r"Pending Award \("), 0, OpportunityStatus.PendingAward),
+                    ("Awarded", re.compile(r"Awarded \("), 0, OpportunityStatus.Awarded),
+                    ("Cancelled", re.compile(r"Cancelled \("), 0, OpportunityStatus.Cancelled),
+                    ("No Award", re.compile(r"No Award \("), 0, OpportunityStatus.NoAward),
+                ]
+
+                for name, pattern, nth, status in sub_tabs:
+                    try:
+                        log.info("scrape: selecting sub-tab %s (expect status: %s)", name, status.value)
+                        tab_el = page.get_by_text(pattern).nth(nth)
+                        await tab_el.wait_for(state="visible", timeout=5000)
+                        await tab_el.click()
+                        await page.wait_for_timeout(2000)
+
+                        try:
+                            await page.wait_for_selector(self.TITLE_ANCHOR, timeout=5000)
+                        except Exception:
+                            log.info("No items or title anchors found in sub-tab %s", name)
+                            continue
+
+                        raw_rows = await self._parse_visible_rows(page)
+                        log.info("scrape: sub-tab %s parsed %d items", name, len(raw_rows))
+                        for r in raw_rows:
+                            item = self._parse_row(r)
+                            if item:
+                                item.status = status
+                                items.append(item)
+                    except Exception as e:
+                        log.exception("Failed to scrape sub-tab %s", name)
+
+            log.info("scrape: total listing parsed %d items across all tabs", len(items))
 
             if self.enrich_details:
                 for item in items[: self.enrich_limit]:
@@ -107,13 +186,15 @@ class GeBIZScraper(BaseScraper):
         pairs: dict[str, str] = r.get("pairs") or {}
         published_at = _parse_dt(pairs.get("Published", ""))
 
+        closing_dt = _parse_dt(pairs.get("Closing on", "")) or _parse_dt(pairs.get("Closed", "")) or _parse_dt(pairs.get("Closing Date", "")) or None
+
         return ScrapedOpportunity(
             document_no=doc_no,
             description=r.get("title", ""),
             agency=pairs.get("Agency") or None,
             opportunity_type=_guess_type_from_doccode(doc_no),
             published_date=published_at.date() if published_at else None,
-            closing_at=None,          # not on listing; filled by enrich_detail when enabled
+            closing_at=closing_dt,
             status=OpportunityStatus.Open,  # newly listed => Open; changes captured by detail enrich
             procurement_category=pairs.get("Procurement Category") or None,
             contact_person=None,
@@ -179,6 +260,16 @@ class GeBIZScraper(BaseScraper):
                   const vals = [...document.querySelectorAll('.formOutputText_VALUE-DIV')].map(e => (e.innerText||'').trim());
                   const m = {};
                   for (let i=0; i<Math.min(labs.length, vals.length); i++) m[labs[i]] = vals[i];
+                  
+                  // Parse Closed / Closing on datetime from floated right column on details page
+                  const rightCol = document.querySelector('.outputText_LABEL-GRAY')?.closest('.formColumns_COLUMN-TABLE');
+                  if (rightCol) {
+                      const rightText = (rightCol.innerText || '').trim();
+                      const lines = rightText.split('\\n').map(l => l.trim()).filter(Boolean);
+                      if (lines.length >= 3) {
+                          m[lines[0]] = lines[1] + " " + lines[2];
+                      }
+                  }
                   return m;
                 }"""
             )
@@ -190,7 +281,7 @@ class GeBIZScraper(BaseScraper):
                     break
 
             # 3. Extract Closing date and time
-            for key in ("Closing Date", "Closing Date & Time", "Closing Date and Time"):
+            for key in ("Closing Date", "Closing Date & Time", "Closing Date and Time", "Closing on", "Closed"):
                 if data.get(key):
                     item.closing_at = _parse_dt(data[key]) or item.closing_at
                     break
@@ -207,67 +298,184 @@ class GeBIZScraper(BaseScraper):
 
             # 5. Parse respondents list and bids if not Open
             if item.status != OpportunityStatus.Open:
-                respondents_data = await page.evaluate(
-                    """() => {
-                      const list = [];
-                      const tables = [...document.querySelectorAll('table')];
-                      for (const table of tables) {
-                          const headers = [...table.querySelectorAll('th')].map(h => (h.innerText||'').trim().toLowerCase());
-                          const nameIdx = headers.findIndex(h => h.includes('supplier') || h.includes('name of') || h.includes('respondent') || h.includes('tenderer') || h.includes('company'));
-                          const priceIdx = headers.findIndex(h => h.includes('amount') || h.includes('price') || h.includes('offer') || h.includes('evaluated') || h.includes('value'));
-                          
-                          if (nameIdx !== -1) {
-                              const rows = [...table.querySelectorAll('tbody tr')];
-                              for (const row of rows) {
-                                  const cells = [...row.querySelectorAll('td')].map(c => (c.innerText||'').trim());
-                                  if (cells.length > nameIdx && cells[nameIdx]) {
-                                      const supplierName = cells[nameIdx];
-                                      let amount = null;
-                                      if (priceIdx !== -1 && cells.length > priceIdx) {
-                                          const cleanPrice = cells[priceIdx].replace(/[^0-9.]/g, '');
-                                          if (cleanPrice) amount = parseFloat(cleanPrice);
+                respondents_data = []
+                award_details = None
+
+                # Look for a tab element matching 'Respondents ('
+                respondents_tab = page.get_by_text(re.compile(r"Respondents \("))
+                if await respondents_tab.count() > 0:
+                    log.info("Detail enrich: clicking Respondents tab")
+                    try:
+                        await respondents_tab.first.click()
+                        await page.wait_for_timeout(2000) # Wait for AJAX load
+                        
+                        respondents_data = await page.evaluate(
+                            """() => {
+                              const list = [];
+                              const tables = [...document.querySelectorAll('table')];
+                              for (const table of tables) {
+                                  const headers = [...table.querySelectorAll('th')].map(h => (h.innerText||'').trim().toLowerCase());
+                                  const nameIdx = headers.findIndex(h => h.includes('supplier') || h.includes('name of') || h.includes('respondent') || h.includes('tenderer') || h.includes('company'));
+                                  const priceIdx = headers.findIndex(h => h.includes('amount') || h.includes('price') || h.includes('offer') || h.includes('evaluated') || h.includes('value'));
+                                  
+                                  if (nameIdx !== -1) {
+                                      const rows = [...table.querySelectorAll('tbody tr')];
+                                      for (const row of rows) {
+                                          const cells = [...row.querySelectorAll('td')].map(c => (c.innerText||'').trim());
+                                          if (cells.length > nameIdx && cells[nameIdx]) {
+                                              const supplierName = cells[nameIdx];
+                                              let amount = null;
+                                              if (priceIdx !== -1 && cells.length > priceIdx) {
+                                                  const cleanPrice = cells[priceIdx].replace(/[^0-9.]/g, '');
+                                                  if (cleanPrice) amount = parseFloat(cleanPrice);
+                                              }
+                                              list.push({
+                                                  supplier_name: supplierName,
+                                                  amount: amount,
+                                                  is_awarded: false
+                                              });
+                                          }
                                       }
-                                      list.push({
-                                          supplier_name: supplierName,
-                                          amount: amount,
-                                          is_awarded: false
-                                      });
                                   }
                               }
-                          }
-                      }
-                      return list;
-                    }"""
-                )
-                
-                # Check for awarded supplier details in the main key-values
-                awarded_supplier = None
-                award_amount = None
-                for key, val in data.items():
-                    k_low = key.lower()
-                    if "awarded supplier" in k_low or "awardee" in k_low or "awarded to" in k_low:
-                        awarded_supplier = val
-                    if "award amount" in k_low or "awarded amount" in k_low or "award value" in k_low:
-                        try:
-                            clean_price = re.sub(r"[^0-9.]", "", val)
-                            if clean_price:
-                                award_amount = float(clean_price)
-                        except Exception:
-                            pass
-                
-                # If awarded details exist, record them
-                if awarded_supplier:
+                              return list;
+                            }"""
+                        )
+                        log.info("Detail enrich: parsed %d respondents", len(respondents_data))
+                    except Exception as e:
+                        log.warning("Failed to click or parse Respondents tab: %s", e)
+
+                # Look for a tab element matching 'Award ('
+                award_tab = page.get_by_text(re.compile(r"Award \("))
+                if await award_tab.count() > 0:
+                    log.info("Detail enrich: clicking Award tab")
+                    try:
+                        await award_tab.first.click()
+                        await page.wait_for_timeout(2000) # Wait for AJAX load
+                        
+                        award_details = await page.evaluate(
+                            """() => {
+                              let supplier = null;
+                              let amount = null;
+                              let date = null;
+
+                              // 1. Try to find the "Awarded to" label and extract the supplier name next to/below it
+                              const allElems = [...document.querySelectorAll('*')];
+                              for (const el of allElems) {
+                                  const txt = (el.innerText || '').trim();
+                                  if (txt === 'Awarded to') {
+                                      const parent = el.parentElement;
+                                      if (parent) {
+                                          const lines = parent.innerText.split('\\n').map(l => l.trim()).filter(Boolean);
+                                          const idx = lines.findIndex(l => l === 'Awarded to');
+                                          if (idx !== -1 && lines.length > idx + 1) {
+                                              supplier = lines[idx + 1];
+                                              if (lines.length > idx + 2 && lines[idx + 2].toLowerCase().includes('value')) {
+                                                  const valLine = lines[idx + 2];
+                                                  const cleanVal = valLine.replace(/[^0-9.]/g, '');
+                                                  if (cleanVal) amount = parseFloat(cleanVal);
+                                              }
+                                          }
+                                      }
+                                      break;
+                                  }
+                              }
+
+                              // 2. Fallback: Check standard key-value inputs/labels
+                              if (!supplier) {
+                                  const labs = [...document.querySelectorAll('.form2_ROW-LABEL label span')].map(e => (e.innerText||'').trim().toLowerCase());
+                                  const vals = [...document.querySelectorAll('.formOutputText_VALUE-DIV')].map(e => (e.innerText||'').trim());
+                                  for (let i = 0; i < Math.min(labs.length, vals.length); i++) {
+                                      const l = labs[i];
+                                      const v = vals[i];
+                                      if (l.includes('awarded supplier') || l.includes('awardee') || l.includes('awarded to')) {
+                                          supplier = v;
+                                      }
+                                      if (l.includes('award amount') || l.includes('awarded amount') || l.includes('award value') || l.includes('total awarded value')) {
+                                          const cleanVal = v.replace(/[^0-9.]/g, '');
+                                          if (cleanVal) amount = parseFloat(cleanVal);
+                                      }
+                                      if (l.includes('awarded date')) {
+                                          date = v;
+                                      }
+                                  }
+                              }
+
+                              // 3. Fallback: Parse from any tables inside the Award tab
+                              if (!supplier) {
+                                  const tables = [...document.querySelectorAll('table')];
+                                  for (const table of tables) {
+                                      const headers = [...table.querySelectorAll('th')].map(h => (h.innerText||'').trim().toLowerCase());
+                                      const nameIdx = headers.findIndex(h => h.includes('supplier') || h.includes('name of') || h.includes('awardee') || h.includes('awarded to'));
+                                      const priceIdx = headers.findIndex(h => h.includes('amount') || h.includes('price') || h.includes('value'));
+                                      if (nameIdx !== -1) {
+                                          const rows = [...table.querySelectorAll('tbody tr')];
+                                          if (rows.length > 0) {
+                                              const cells = [...rows[0].querySelectorAll('td')].map(c => (c.innerText||'').trim());
+                                              if (cells.length > nameIdx) {
+                                                  supplier = cells[nameIdx];
+                                                  if (priceIdx !== -1 && cells.length > priceIdx) {
+                                                      const cleanVal = cells[priceIdx].replace(/[^0-9.]/g, '');
+                                                      if (cleanVal) amount = parseFloat(cleanVal);
+                                                  }
+                                              }
+                                          }
+                                      }
+                                  }
+                              }
+
+                              // 4. Try to parse Awarded Date if not found
+                              if (!date) {
+                                  const dateEl = [...document.querySelectorAll('*')].find(el => (el.innerText || '').trim().includes('Awarded Date'));
+                                  if (dateEl && dateEl.parentElement) {
+                                      const lines = dateEl.parentElement.innerText.split('\\n').map(l => l.trim()).filter(Boolean);
+                                      const idx = lines.findIndex(l => l.includes('Awarded Date'));
+                                      if (idx !== -1 && lines.length > idx + 1) {
+                                          date = lines[idx + 1];
+                                      }
+                                  }
+                              }
+
+                              return { supplier_name: supplier, amount: amount, awarded_date: date };
+                            }"""
+                        )
+                        log.info("Detail enrich: parsed award details %s", award_details)
+                    except Exception as e:
+                        log.warning("Failed to click or parse Award tab: %s", e)
+
+                # Cross-reference award details and respondents
+                if award_details and award_details.get("supplier_name"):
+                    awarded_supplier = award_details["supplier_name"]
+                    award_amount = award_details.get("amount")
+                    
                     item.award_details = {
                         "supplier_name": awarded_supplier,
                         "amount": award_amount,
-                        "awarded_date": datetime.now().date().isoformat()
+                        "awarded_date": award_details.get("awarded_date") or datetime.now().date().isoformat()
                     }
-                    # Mark in respondents
+                    
+                    # Mark awarded in respondents list
+                    matched = False
                     for resp in respondents_data:
                         if resp["supplier_name"].lower() == awarded_supplier.lower():
                             resp["is_awarded"] = True
-                            if award_amount and not resp["amount"]:
+                            matched = True
+                            if award_amount and not resp.get("amount"):
                                 resp["amount"] = award_amount
+                    
+                    # If the awarded supplier is somehow not in the respondents list, add them!
+                    if not matched:
+                        respondents_data.append({
+                            "supplier_name": awarded_supplier,
+                            "amount": award_amount,
+                            "is_awarded": True
+                        })
+                elif award_details and (award_details.get("amount") or award_details.get("awarded_date")):
+                    item.award_details = {
+                        "supplier_name": None,
+                        "amount": award_details.get("amount"),
+                        "awarded_date": award_details.get("awarded_date")
+                    }
 
                 item.respondents = respondents_data
         finally:

@@ -48,6 +48,9 @@ async def run_sync() -> SyncResult:
                     changes += 1
                     _notify_status_changed(db, item)
 
+        # Commit listing phase results immediately so users see newly scraped list data in the UI
+        db.commit()
+
         # 2. Enrich active/non-final opportunities in the database
         active_opps = db.query(Opportunity).filter(
             Opportunity.status.in_([OpportunityStatus.Open, OpportunityStatus.Closed, OpportunityStatus.PendingAward])
@@ -59,13 +62,14 @@ async def run_sync() -> SyncResult:
                 enriched = await scraper.enrich_opportunity(opp.document_no)
                 if enriched:
                     _, status_changed = _upsert(db, enriched)
+                    db.commit() # Commit each enrichment immediately
                     if status_changed:
                         changes += 1
                         _notify_status_changed(db, enriched)
             except Exception:
+                db.rollback()
                 log.exception("failed to enrich active opportunity %s", opp.document_no)
 
-        db.commit()
         log_row.items_new = new
         log_row.items_updated = updated
         log_row.status = "ok"
