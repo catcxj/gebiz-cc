@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import enum
-from datetime import datetime, date
-from sqlalchemy import String, Text, DateTime, Date, Enum, ForeignKey, JSON, Boolean, Integer, Float
+from datetime import datetime, date, timezone, timedelta
+from sqlalchemy import String, Text, DateTime, Date, Enum, ForeignKey, JSON, Boolean, Integer, Float, case, and_
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.ext.hybrid import hybrid_property
 
 from ..database import Base
 
@@ -36,7 +37,34 @@ class Opportunity(Base):
     agency: Mapped[str | None] = mapped_column(String(128), index=True)
     published_date: Mapped[date | None] = mapped_column(Date, index=True)
     closing_at: Mapped[datetime | None] = mapped_column(DateTime, index=True)
-    status: Mapped[OpportunityStatus] = mapped_column(Enum(OpportunityStatus), default=OpportunityStatus.Open, index=True)
+    _status: Mapped[OpportunityStatus] = mapped_column("status", Enum(OpportunityStatus), default=OpportunityStatus.Open, index=True)
+
+    @hybrid_property
+    def status(self) -> OpportunityStatus:
+        if self._status == OpportunityStatus.Open and self.closing_at:
+            sg_now = (datetime.now(timezone.utc) + timedelta(hours=8)).replace(tzinfo=None)
+            if self.closing_at < sg_now:
+                return OpportunityStatus.Closed
+        return self._status
+
+    @status.setter
+    def status(self, val):
+        self._status = val
+
+    @status.expression
+    def status(cls):
+        sg_now = (datetime.now(timezone.utc) + timedelta(hours=8)).replace(tzinfo=None)
+        return case(
+            (
+                and_(
+                    cls._status == OpportunityStatus.Open,
+                    cls.closing_at.isnot(None),
+                    cls.closing_at < sg_now
+                ),
+                OpportunityStatus.Closed
+            ),
+            else_=cls._status
+        )
     procurement_category: Mapped[str | None] = mapped_column(String(64))
     contact_person: Mapped[str | None] = mapped_column(Text)
     award_details: Mapped[dict | None] = mapped_column(JSON)
