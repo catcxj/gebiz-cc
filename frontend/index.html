@@ -129,11 +129,11 @@ function renderList(items) {
 
     return `<tr class="${closingSoon ? "row-closing" : ""}">
       <td><span class="star ${o.is_watched ? "active" : ""}" data-doc="${o.document_no}">${o.is_watched ? "★" : "☆"}</span></td>
-      <td><a href="/detail.html?doc=${encodeURIComponent(o.document_no)}">${o.document_no}</a></td>
+      <td><a href="/detail.html?doc=${encodeURIComponent(o.document_no)}${window.location.search ? '&' + window.location.search.substring(1) : ''}">${o.document_no}</a></td>
       <td style="font-family:monospace; font-size:12px;">${escapeHTML(o.reference_no || "—")}</td>
       <td>${o.opportunity_type || ""}</td>
       <td>${o.agency || ""}</td>
-      <td><a href="/detail.html?doc=${encodeURIComponent(o.document_no)}">${escapeHTML(o.description || "")}</a></td>
+      <td><a href="/detail.html?doc=${encodeURIComponent(o.document_no)}${window.location.search ? '&' + window.location.search.substring(1) : ''}">${escapeHTML(o.description || "")}</a></td>
       <td>${statusPill(o.status)}</td>
       <td>${fmtDateOnly(o.published_date)}</td>
       <td>${closingHtml}</td>
@@ -155,9 +155,38 @@ function renderList(items) {
 
 function escapeHTML(s) { return (s || "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" }[c])); }
 
-$("#filters").addEventListener("submit", (e) => { e.preventDefault(); state.page = 1; load(); });
-$("#prev").addEventListener("click", () => { if (state.page > 1) { state.page--; load(); }});
-$("#next").addEventListener("click", () => { state.page++; load(); });
+function applyUrlToFormAndState() {
+  const params = new URLSearchParams(window.location.search);
+  const pageParam = parseInt(params.get("page"), 10);
+  state.page = (!isNaN(pageParam) && pageParam > 0) ? pageParam : 1;
+  const f = $("#filters");
+  if (f) {
+    f.agency.value = params.get("agency") || "";
+    f.type.value = params.get("type") || "";
+    f.status.value = params.get("status") || "";
+    f.date_from.value = params.get("date_from") || "";
+    f.date_to.value = params.get("date_to") || "";
+    f.q.value = params.get("q") || "";
+    f.watched_only.checked = params.get("watched_only") === "true";
+  }
+}
+
+function updateUrlAndLoad() {
+  const filters = readFilters();
+  const params = { ...filters, page: state.page };
+  const query = qs(params);
+  history.pushState(null, "", window.location.pathname + query);
+  load();
+}
+
+window.addEventListener("popstate", () => {
+  applyUrlToFormAndState();
+  load();
+});
+
+$("#filters").addEventListener("submit", (e) => { e.preventDefault(); state.page = 1; updateUrlAndLoad(); });
+$("#prev").addEventListener("click", () => { if (state.page > 1) { state.page--; updateUrlAndLoad(); }});
+$("#next").addEventListener("click", () => { state.page++; updateUrlAndLoad(); });
 
 function handleJump() {
   const jumpInput = $("#jump-page");
@@ -169,7 +198,7 @@ function handleJump() {
     return;
   }
   state.page = val;
-  load();
+  updateUrlAndLoad();
 }
 $("#btn-jump").addEventListener("click", handleJump);
 $("#jump-page").addEventListener("keydown", (e) => {
@@ -240,10 +269,14 @@ $("#nav-notif").addEventListener("click", async (e) => {
   renderNotificationsInPanel();
 });
 
-loadAgencies();
-load();
-refreshUnread();
-setInterval(refreshUnread, 60_000);
+async function init() {
+  await loadAgencies();
+  applyUrlToFormAndState();
+  await load();
+  refreshUnread();
+  setInterval(refreshUnread, 60_000);
+}
+init();
 </script>
 </body>
 </html>

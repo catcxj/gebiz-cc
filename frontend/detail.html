@@ -9,7 +9,7 @@
 <header>
   <h1>GeBIZ Monitor</h1>
   <nav>
-    <a href="/">← Back to Dashboard</a>
+    <a href="/" id="back-to-dashboard">← Back to Dashboard</a>
     <a href="/suppliers.html">Supplier Master</a>
     <a href="/settings.html">Notification Settings</a>
   </nav>
@@ -22,7 +22,13 @@
 <script type="module">
 import { api, fmtDate, fmtDateOnly, statusPill, daysUntil } from "/static/app.js";
 
-const doc = new URLSearchParams(location.search).get("doc");
+const params = new URLSearchParams(window.location.search);
+const doc = params.get("doc");
+params.delete("doc");
+const backLink = document.getElementById("back-to-dashboard");
+if (backLink) {
+  backLink.href = "/" + (params.toString() ? "?" + params.toString() : "");
+}
 const $ = (s) => document.querySelector(s);
 const escapeHTML = (s) => (s || "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" }[c]));
 const fmtCurrency = (val) => val === null || val === undefined ? "—" : new Intl.NumberFormat('en-SG', { style: 'currency', currency: 'SGD' }).format(val);
