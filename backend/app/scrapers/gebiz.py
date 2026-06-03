@@ -287,10 +287,15 @@ class GeBIZScraper(BaseScraper):
                     break
 
             # 4. Extract Status
+            status_extracted = False
             for key in ("Status", "Tender Status", "Quotation Status"):
                 if data.get(key):
                     item.status = _map_status(data[key]) or item.status
+                    status_extracted = True
                     break
+            if not status_extracted and "Closed" in data:
+                item.status = OpportunityStatus.Closed
+
 
             contact = data.get("Contact Person") or data.get("Enquiry")
             if contact:
