@@ -270,6 +270,13 @@ class GeBIZScraper(BaseScraper):
                           m[lines[0]] = lines[1] + " " + lines[2];
                       }
                   }
+
+                  // Parse status badge
+                  const statusBadge = document.querySelector('.formSectionHeader3_CHILD-DIV, .label_WHITE-ON-GRAY');
+                  if (statusBadge) {
+                      m['_badge_status'] = (statusBadge.innerText || '').trim();
+                  }
+
                   return m;
                 }"""
             )
@@ -288,11 +295,20 @@ class GeBIZScraper(BaseScraper):
 
             # 4. Extract Status
             status_extracted = False
-            for key in ("Status", "Tender Status", "Quotation Status"):
-                if data.get(key):
-                    item.status = _map_status(data[key]) or item.status
+            badge_status = data.get("_badge_status")
+            if badge_status:
+                mapped_status = _map_status(badge_status)
+                if mapped_status:
+                    item.status = mapped_status
                     status_extracted = True
-                    break
+                    log.info("Extracted status from badge: %s (%s)", badge_status, mapped_status.value)
+
+            if not status_extracted:
+                for key in ("Status", "Tender Status", "Quotation Status"):
+                    if data.get(key):
+                        item.status = _map_status(data[key]) or item.status
+                        status_extracted = True
+                        break
             if not status_extracted and "Closed" in data:
                 item.status = OpportunityStatus.Closed
 
@@ -312,33 +328,143 @@ class GeBIZScraper(BaseScraper):
                     log.info("Detail enrich: clicking Respondents tab")
                     try:
                         await respondents_tab.first.click()
-                        await page.wait_for_timeout(2000) # Wait for AJAX load
+                        await page.wait_for_selector(":has-text('responded')", timeout=10000)
+                        
+                        # Intelligent wait for all respondents to load in DOM
+                        try:
+                            expected_count = await page.evaluate(
+                                """() => {
+                                    const el = [...document.querySelectorAll('*')].find(e => /\\d+\\s+supplier(s)?\\s+responded/i.test(e.innerText || ''));
+                                    if (el) {
+                                        const match = (el.innerText || '').match(/(\\d+)\\s+supplier/i);
+                                        if (match) return parseInt(match[1], 10);
+                                    }
+                                    return null;
+                                }"""
+                            )
+                            if expected_count is not None:
+                                log.info("Detail enrich: expecting %d respondents based on header text", expected_count)
+                                for _ in range(50):
+                                    current_count = await page.evaluate(
+                                        """() => {
+                                            const accs = document.querySelectorAll('.ui-accordion-header, .formAccordion_MAIN');
+                                            return accs.length;
+                                        }"""
+                                    )
+                                    if current_count >= expected_count:
+                                        break
+                                    await page.wait_for_timeout(200)
+                            else:
+                                await page.wait_for_timeout(2000)
+                        except Exception as wait_err:
+                            log.warning("Detail enrich: error waiting for respondents: %s", wait_err)
+                            await page.wait_for_timeout(2000)
                         
                         respondents_data = await page.evaluate(
                             """() => {
                               const list = [];
-                              const tables = [...document.querySelectorAll('table')];
-                              for (const table of tables) {
-                                  const headers = [...table.querySelectorAll('th')].map(h => (h.innerText||'').trim().toLowerCase());
-                                  const nameIdx = headers.findIndex(h => h.includes('supplier') || h.includes('name of') || h.includes('respondent') || h.includes('tenderer') || h.includes('company'));
-                                  const priceIdx = headers.findIndex(h => h.includes('amount') || h.includes('price') || h.includes('offer') || h.includes('evaluated') || h.includes('value'));
+                              
+                              // Layout 1: ui-accordion
+                              const accordionHeaders = [...document.querySelectorAll('.ui-accordion-header')];
+                              for (const header of accordionHeaders) {
+                                  const cells = [...header.querySelectorAll('td')].map(c => (c.innerText || '').trim());
+                                  let supplierName = '';
+                                  let amount = null;
                                   
-                                  if (nameIdx !== -1) {
-                                      const rows = [...table.querySelectorAll('tbody tr')];
-                                      for (const row of rows) {
-                                          const cells = [...row.querySelectorAll('td')].map(c => (c.innerText||'').trim());
-                                          if (cells.length > nameIdx && cells[nameIdx]) {
-                                              const supplierName = cells[nameIdx];
-                                              let amount = null;
-                                              if (priceIdx !== -1 && cells.length > priceIdx) {
-                                                  const cleanPrice = cells[priceIdx].replace(/[^0-9.]/g, '');
-                                                  if (cleanPrice) amount = parseFloat(cleanPrice);
+                                  if (cells.length >= 2) {
+                                      supplierName = cells[0];
+                                      const cleanPrice = cells[1].replace(/[^0-9.]/g, '');
+                                      if (cleanPrice) amount = parseFloat(cleanPrice);
+                                  } else {
+                                      const text = (header.innerText || '').trim();
+                                      const parts = text.split(/[|\\n\\r]+/).map(p => p.trim()).filter(Boolean);
+                                      if (parts.length >= 2) {
+                                          if (parts[1].includes('SGD') || /[0-9]/.test(parts[1])) {
+                                              supplierName = parts[0];
+                                              const cleanPrice = parts[1].replace(/[^0-9.]/g, '');
+                                              if (cleanPrice) amount = parseFloat(cleanPrice);
+                                          } else {
+                                              supplierName = parts[1];
+                                              const cleanPrice = parts[0].replace(/[^0-9.]/g, '');
+                                              if (cleanPrice) amount = parseFloat(cleanPrice);
+                                          }
+                                      } else if (text) {
+                                          supplierName = text;
+                                      }
+                                  }
+                                  if (supplierName) {
+                                      list.push({
+                                          supplier_name: supplierName,
+                                          amount: amount,
+                                          is_awarded: false
+                                      });
+                                  }
+                              }
+                              
+                              // Layout 2: formAccordion_BAR / formAccordion_UNSELECTED
+                              if (list.length === 0) {
+                                  const formBars = [...document.querySelectorAll('.formAccordion_BAR, .formAccordion_UNSELECTED')];
+                                  for (const bar of formBars) {
+                                      if (bar.parentElement && (bar.parentElement.classList.contains('formAccordion_BAR') || bar.parentElement.classList.contains('formAccordion_UNSELECTED'))) {
+                                          continue;
+                                      }
+                                      
+                                      const titleTextEl = bar.querySelector('.formAccordion_TITLE-TEXT');
+                                      let supplierName = titleTextEl ? titleTextEl.innerText.trim() : '';
+                                      let amount = null;
+                                      
+                                      const text = (bar.innerText || '').trim();
+                                      const parts = text.split(/[|\\n\\r]+/).map(p => p.trim()).filter(Boolean);
+                                      if (parts.length >= 2) {
+                                          if (!supplierName) {
+                                              if (parts[1].includes('SGD') || /[0-9]/.test(parts[1])) {
+                                                  supplierName = parts[0];
+                                              } else {
+                                                  supplierName = parts[1];
                                               }
-                                              list.push({
-                                                  supplier_name: supplierName,
-                                                  amount: amount,
-                                                  is_awarded: false
-                                              });
+                                          }
+                                          const pricePart = parts[0] === supplierName ? parts[1] : parts[0];
+                                          const cleanPrice = pricePart.replace(/[^0-9.]/g, '');
+                                          if (cleanPrice) amount = parseFloat(cleanPrice);
+                                      } else if (text && !supplierName) {
+                                          supplierName = text;
+                                      }
+                                      
+                                      if (supplierName) {
+                                          list.push({
+                                              supplier_name: supplierName,
+                                              amount: amount,
+                                              is_awarded: false
+                                          });
+                                      }
+                                  }
+                              }
+                              
+                              // Fallback: Parse from standard tables
+                              if (list.length === 0) {
+                                  const tables = [...document.querySelectorAll('table')];
+                                  for (const table of tables) {
+                                      const headers = [...table.querySelectorAll('th')].map(h => (h.innerText||'').trim().toLowerCase());
+                                      const nameIdx = headers.findIndex(h => h.includes('supplier') || h.includes('name of') || h.includes('respondent') || h.includes('tenderer') || h.includes('company'));
+                                      const priceIdx = headers.findIndex(h => h.includes('amount') || h.includes('price') || h.includes('offer') || h.includes('evaluated') || h.includes('value'));
+                                      
+                                      if (nameIdx !== -1) {
+                                          const rows = [...table.querySelectorAll('tbody tr')];
+                                          for (const row of rows) {
+                                              const cells = [...row.querySelectorAll('td')].map(c => (c.innerText||'').trim());
+                                              if (cells.length > nameIdx && cells[nameIdx]) {
+                                                  const supplierName = cells[nameIdx];
+                                                  let amount = null;
+                                                  if (priceIdx !== -1 && cells.length > priceIdx) {
+                                                      const cleanPrice = cells[priceIdx].replace(/[^0-9.]/g, '');
+                                                      if (cleanPrice) amount = parseFloat(cleanPrice);
+                                                  }
+                                                  list.push({
+                                                      supplier_name: supplierName,
+                                                      amount: amount,
+                                                      is_awarded: false
+                                                  });
+                                              }
                                           }
                                       }
                                   }
@@ -356,7 +482,35 @@ class GeBIZScraper(BaseScraper):
                     log.info("Detail enrich: clicking Award tab")
                     try:
                         await award_tab.first.click()
-                        await page.wait_for_timeout(2000) # Wait for AJAX load
+                        await page.wait_for_selector(".formSectionHeader2_HEADER, :has-text('Awarding Agency')", timeout=10000)
+                        
+                        # Wait up to 3 seconds for the "Awarded to" header to load if we expect awardees
+                        try:
+                            for _ in range(15): # 15 * 200ms = 3s
+                                is_loaded = await page.evaluate(
+                                    """() => {
+                                        const headers = [...document.querySelectorAll('.formSectionHeader2_HEADER')];
+                                        const hasAwardedTo = headers.some(h => h.innerText.trim() === 'Awarded to');
+                                        if (hasAwardedTo) return true;
+                                        
+                                        const labels = [...document.querySelectorAll('.form2_ROW-LABEL label')];
+                                        for (const lbl of labels) {
+                                            if (lbl.innerText.trim().toLowerCase().includes('no. of suppliers awarded')) {
+                                                const rowEl = lbl.closest('tr');
+                                                const valDiv = rowEl ? rowEl.querySelector('.formOutputText_VALUE-DIV') : null;
+                                                const valText = valDiv ? valDiv.innerText.trim() : '';
+                                                if (valText === '0') return true;
+                                            }
+                                        }
+                                        return false;
+                                    }"""
+                                )
+                                if is_loaded:
+                                    break
+                                await page.wait_for_timeout(200)
+                        except Exception as wait_err:
+                            log.warning("Detail enrich: error waiting for award details: %s", wait_err)
+                            await page.wait_for_timeout(1000)
                         
                         award_details = await page.evaluate(
                             """() => {
@@ -364,29 +518,53 @@ class GeBIZScraper(BaseScraper):
                               let amount = null;
                               let date = null;
 
-                              // 1. Try to find the "Awarded to" label and extract the supplier name next to/below it
-                              const allElems = [...document.querySelectorAll('*')];
-                              for (const el of allElems) {
-                                  const txt = (el.innerText || '').trim();
-                                  if (txt === 'Awarded to') {
-                                      const parent = el.parentElement;
-                                      if (parent) {
-                                          const lines = parent.innerText.split('\\n').map(l => l.trim()).filter(Boolean);
-                                          const idx = lines.findIndex(l => l === 'Awarded to');
-                                          if (idx !== -1 && lines.length > idx + 1) {
-                                              supplier = lines[idx + 1];
-                                              if (lines.length > idx + 2 && lines[idx + 2].toLowerCase().includes('value')) {
-                                                  const valLine = lines[idx + 2];
-                                                  const cleanVal = valLine.replace(/[^0-9.]/g, '');
-                                                  if (cleanVal) amount = parseFloat(cleanVal);
+                              // 1. Find Awarded to supplier name
+                              const awardHeaders = [...document.querySelectorAll('.formSectionHeader2_HEADER, .formSectionHeader2_CHILD-DIV, .formSectionHeader2_MAIN-DIV, .formSectionHeader3_HEADER, .formSectionHeader3_CHILD-DIV, .formSectionHeader4_MAIN, .formContainer_MAIN')];
+                              const awardedToHeader = awardHeaders.find(h => h.innerText.trim().startsWith('Awarded to'));
+                              if (awardedToHeader) {
+                                  const parentContainer = awardedToHeader.closest('.row') || awardedToHeader.closest('.formContainer_MAIN') || awardedToHeader.parentElement;
+                                  if (parentContainer) {
+                                      // Search inside the container first
+                                      const boldEl = parentContainer.querySelector('.outputText_TITLE-BLACK, label.font-weight-bold, .formOutputText_MAIN');
+                                      if (boldEl) {
+                                          supplier = boldEl.innerText.trim();
+                                      }
+                                      
+                                      // Search in subsequent sibling rows
+                                      if (!supplier) {
+                                          let nextRow = parentContainer.nextElementSibling || parentContainer.parentElement?.nextElementSibling;
+                                          while (nextRow) {
+                                              const siblingBold = nextRow.querySelector('.outputText_TITLE-BLACK, label.font-weight-bold, .formOutputText_MAIN, .form2_ROW-LABEL label');
+                                              if (siblingBold) {
+                                                  supplier = siblingBold.innerText.trim();
+                                                  break;
                                               }
+                                              nextRow = nextRow.nextElementSibling;
                                           }
                                       }
-                                      break;
                                   }
                               }
 
-                              // 2. Fallback: Check standard key-value inputs/labels
+                              // 2. Find Awarded Date and Total Awarded Value from labels
+                              const allLabels = [...document.querySelectorAll('.form2_ROW-LABEL')];
+                              for (const lbl of allLabels) {
+                                  const txt = lbl.innerText.trim().toLowerCase();
+                                  const rowEl = lbl.closest('tr') || lbl.closest('.form2_ROW-TABLE') || lbl.parentElement;
+                                  const valDiv = rowEl ? rowEl.querySelector('.formOutputText_VALUE-DIV') : null;
+                                  const valText = valDiv ? valDiv.innerText.trim() : '';
+
+                                  if (txt.includes('awarded date')) {
+                                      date = valText;
+                                  }
+                                  if (txt.includes('total awarded value') || txt.includes('award amount') || txt.includes('awarded value')) {
+                                      if (!amount && valText) {
+                                          const cleanVal = valText.replace(/[^0-9.]/g, '');
+                                          if (cleanVal) amount = parseFloat(cleanVal);
+                                      }
+                                  }
+                              }
+
+                              // 3. Fallback: Check standard key-value inputs/labels with span
                               if (!supplier) {
                                   const labs = [...document.querySelectorAll('.form2_ROW-LABEL label span')].map(e => (e.innerText||'').trim().toLowerCase());
                                   const vals = [...document.querySelectorAll('.formOutputText_VALUE-DIV')].map(e => (e.innerText||'').trim());
@@ -406,7 +584,7 @@ class GeBIZScraper(BaseScraper):
                                   }
                               }
 
-                              // 3. Fallback: Parse from any tables inside the Award tab
+                              // 4. Fallback: Parse from any tables inside the Award tab
                               if (!supplier) {
                                   const tables = [...document.querySelectorAll('table')];
                                   for (const table of tables) {
@@ -429,7 +607,7 @@ class GeBIZScraper(BaseScraper):
                                   }
                               }
 
-                              // 4. Try to parse Awarded Date if not found
+                              // 5. Try to parse Awarded Date if not found
                               if (!date) {
                                   const dateEl = [...document.querySelectorAll('*')].find(el => (el.innerText || '').trim().includes('Awarded Date'));
                                   if (dateEl && dateEl.parentElement) {
