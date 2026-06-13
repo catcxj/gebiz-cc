@@ -25,6 +25,7 @@ def list_opportunities(
     agency: Optional[str] = None,
     type: Optional[OpportunityType] = None,
     status: Optional[OpportunityStatus] = None,
+    source: Optional[str] = None,
     date_from: Optional[date] = None,
     date_to: Optional[date] = None,
     q: Optional[str] = None,
@@ -40,6 +41,11 @@ def list_opportunities(
         query = query.filter(Opportunity.opportunity_type == type)
     if status:
         query = query.filter(Opportunity.status == status)
+    if source:
+        if source.lower() == "psa":
+            query = query.filter(Opportunity.agency == "PSA")
+        elif source.lower() == "gebiz":
+            query = query.filter(or_(Opportunity.agency != "PSA", Opportunity.agency.is_(None)))
     if date_from:
         query = query.filter(Opportunity.published_date >= date_from)
     if date_to:

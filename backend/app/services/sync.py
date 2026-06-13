@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from ..database import SessionLocal
 from ..models import Opportunity, StatusUpdate, ScrapeLog, NotificationType, Watch, OpportunityStatus, OpportunityRespondent
 from ..notifications import dispatch, NotificationPayload
-from ..scrapers import ScrapedOpportunity, get_scraper
+from ..scrapers import ScrapedOpportunity, get_scrapers, get_scraper_for_opp
 from .alerts import match_keywords, list_users_with_rules
 
 log = logging.getLogger(__name__)
@@ -36,18 +36,22 @@ async def run_sync() -> SyncResult:
 
     new = updated = changes = 0
     try:
-        # 1. Fetch listing and upsert
-        scraper = get_scraper()
-        async for item in scraper.fetch():
-            created, status_changed = _upsert(db, item)
-            if created:
-                new += 1
-                _notify_if_match(db, item)
-            else:
-                updated += 1
-                if status_changed:
-                    changes += 1
-                    _notify_status_changed(db, item)
+        # 1. Fetch listing and upsert from all scrapers
+        scrapers = get_scrapers()
+        for scraper in scrapers:
+            try:
+                async for item in scraper.fetch():
+                    created, status_changed = _upsert(db, item)
+                    if created:
+                        new += 1
+                        _notify_if_match(db, item)
+                    else:
+                        updated += 1
+                        if status_changed:
+                            changes += 1
+                            _notify_status_changed(db, item)
+            except Exception as e:
+                log.exception("failed to fetch from scraper %s", scraper.__class__.__name__)
 
         # Commit listing phase results immediately so users see newly scraped list data in the UI
         db.commit()
@@ -66,8 +70,13 @@ async def run_sync() -> SyncResult:
         
         for opp in active_opps:
             try:
-                enriched = await scraper.enrich_opportunity(opp.document_no)
+                opp_scraper = get_scraper_for_opp(opp)
+                enriched = await opp_scraper.enrich_opportunity(opp.document_no)
                 if enriched:
+                    # If document_no was refined (e.g. from slug to real ref), delete the temporary record
+                    if enriched.document_no != opp.document_no:
+                        db.delete(opp)
+                        db.commit()
                     _, status_changed = _upsert(db, enriched)
                     db.commit() # Commit each enrichment immediately
                     if status_changed:

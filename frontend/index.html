@@ -18,6 +18,13 @@
 
 <main>
   <form class="filters" id="filters">
+    <label>Source
+      <select name="source">
+        <option value="">All</option>
+        <option value="GeBIZ">GeBIZ</option>
+        <option value="PSA">PSA</option>
+      </select>
+    </label>
     <label>Agency
       <select name="agency"><option value="">All</option></select>
     </label>
@@ -131,6 +138,7 @@ function renderList(items) {
       <td><span class="star ${o.is_watched ? "active" : ""}" data-doc="${o.document_no}">${o.is_watched ? "★" : "☆"}</span></td>
       <td><a href="/detail.html?doc=${encodeURIComponent(o.document_no)}${window.location.search ? '&' + window.location.search.substring(1) : ''}">${o.document_no}</a></td>
       <td style="font-family:monospace; font-size:12px;">${escapeHTML(o.reference_no || "—")}</td>
+      <td>${o.source || ""}</td>
       <td>${o.opportunity_type || ""}</td>
       <td>${o.agency || ""}</td>
       <td><a href="/detail.html?doc=${encodeURIComponent(o.document_no)}${window.location.search ? '&' + window.location.search.substring(1) : ''}">${escapeHTML(o.description || "")}</a></td>
@@ -140,7 +148,7 @@ function renderList(items) {
     </tr>`;
   }).join("");
   $("#list-wrap").innerHTML = `<table>
-    <thead><tr><th></th><th>Doc No.</th><th>Ref No.</th><th>Type</th><th>Agency</th><th>Description</th><th>Status</th><th>Published</th><th>Closing</th></tr></thead>
+    <thead><tr><th></th><th>Doc No.</th><th>Ref No.</th><th>Source</th><th>Type</th><th>Agency</th><th>Description</th><th>Status</th><th>Published</th><th>Closing</th></tr></thead>
     <tbody>${rows}</tbody></table>`;
   $("#list-wrap").querySelectorAll(".star").forEach(el => {
     el.addEventListener("click", async (e) => {
@@ -161,6 +169,7 @@ function applyUrlToFormAndState() {
   state.page = (!isNaN(pageParam) && pageParam > 0) ? pageParam : 1;
   const f = $("#filters");
   if (f) {
+    f.source.value = params.get("source") || "";
     f.agency.value = params.get("agency") || "";
     f.type.value = params.get("type") || "";
     f.status.value = params.get("status") || "";

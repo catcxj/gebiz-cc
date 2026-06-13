@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, date
 from typing import Optional, Any
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, computed_field
 
 from .models.opportunity import OpportunityType, OpportunityStatus
 from .models.notification import NotificationType
@@ -23,6 +23,13 @@ class OpportunityBase(BaseModel):
     contact_person: Optional[str] = None
     award_details: Optional[dict] = None
     source_url: Optional[str] = None
+
+    @computed_field
+    @property
+    def source(self) -> str:
+        if self.agency == "PSA" or (self.source_url and "singaporepsa.com" in self.source_url):
+            return "PSA"
+        return "GeBIZ"
 
 
 class OpportunityListItem(OpportunityBase):
