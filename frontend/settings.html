@@ -4,6 +4,180 @@
   <meta charset="utf-8" />
   <title>GeBIZ Monitor — Notification Settings</title>
   <link rel="stylesheet" href="/static/styles.css" />
+  <style>
+    /* Premium panel layout styling */
+    .settings-container {
+      display: grid;
+      grid-template-columns: 300px 1fr;
+      gap: 24px;
+      margin-top: 16px;
+      align-items: start;
+    }
+    
+    .sidebar-card {
+      background: #fff;
+      border-radius: 12px;
+      padding: 16px;
+      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
+      display: flex;
+      flex-direction: column;
+      max-height: 80vh;
+      border: 1px solid #e2e8f0;
+    }
+    
+    .rule-list {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      overflow-y: auto;
+      margin-top: 12px;
+      padding-right: 4px;
+    }
+    
+    .rule-item {
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      padding: 12px;
+      cursor: pointer;
+      transition: all 0.2s ease-in-out;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    
+    .rule-item:hover {
+      border-color: #cbd5e1;
+      background: #f1f5f9;
+    }
+    
+    .rule-item.selected {
+      border: 2px solid #3b82f6;
+      background: #eff6ff;
+      padding: 11px;
+    }
+    
+    .rule-item-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+    }
+    
+    .rule-item-name {
+      font-weight: 600;
+      font-size: 13px;
+      color: #1e293b;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    
+    .rule-item-summary {
+      font-size: 11px;
+      color: #64748b;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      line-height: 1.4;
+    }
+
+    .btn-add-rule {
+      background: #f1f5f9;
+      color: #3b82f6;
+      border: 1px dashed #3b82f6;
+      padding: 10px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 600;
+      text-align: center;
+      transition: all 0.2s;
+      margin-top: 16px;
+    }
+    .btn-add-rule:hover {
+      background: #eff6ff;
+      border-style: solid;
+    }
+
+    /* Switch styling */
+    .switch {
+      position: relative;
+      display: inline-block;
+      width: 34px;
+      height: 20px;
+      flex-shrink: 0;
+    }
+    .switch input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+    .slider {
+      position: absolute;
+      cursor: pointer;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background-color: #cbd5e1;
+      transition: .2s;
+      border-radius: 20px;
+    }
+    .slider:before {
+      position: absolute;
+      content: "";
+      height: 14px;
+      width: 14px;
+      left: 3px;
+      bottom: 3px;
+      background-color: white;
+      transition: .2s;
+      border-radius: 50%;
+    }
+    input:checked + .slider {
+      background-color: #3b82f6;
+    }
+    input:checked + .slider:before {
+      transform: translateX(14px);
+    }
+    
+    .settings-form-card {
+      background: #fff;
+      border-radius: 12px;
+      padding: 24px;
+      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
+      border: 1px solid #e2e8f0;
+    }
+    
+    .form-group-title {
+      font-size: 14px;
+      font-weight: 600;
+      color: #334155;
+      margin-top: 24px;
+      margin-bottom: 12px;
+      border-left: 3px solid #3b82f6;
+      padding-left: 8px;
+    }
+
+    .form-group-title:first-of-type {
+      margin-top: 0;
+    }
+    
+    .btn-delete {
+      background: #fff;
+      color: #ef4444;
+      border: 1px solid #fee2e2;
+      padding: 8px 14px;
+      border-radius: 4px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    
+    .btn-delete:hover {
+      background: #fef2f2;
+      border-color: #fca5a5;
+    }
+  </style>
 </head>
 <body>
 <header>
@@ -13,101 +187,332 @@
   </nav>
 </header>
 
-<main>
-  <div class="card" style="max-width:720px; margin:0 auto;">
-    <h2>Notification Rules</h2>
-    <form id="rule-form">
-      <h3 style="font-size:14px; margin-top:16px;">New Opportunity Keywords</h3>
-      <div class="row">
-        <label>Keywords</label>
-        <input type="text" name="keywords" placeholder="LTA, Construction, BIM, Software, Marketing" />
+<main style="max-width:1200px;">
+  <h2 style="margin-bottom: 20px;">Notification Settings</h2>
+  
+  <div class="settings-container">
+    <!-- Left Sidebar -->
+    <div class="sidebar-card">
+      <strong style="font-size: 13px; color: #475569; border-bottom: 1px solid #f1f5f9; padding-bottom: 8px;">Notification Rules</strong>
+      <div class="rule-list" id="rule-list-container">
+        <!-- JS populated rule items -->
       </div>
-      <small style="color:#6b7280; display:block; margin-bottom:16px;">Comma-separated. Case-insensitive substring match on description or agency.</small>
+      <button class="btn-add-rule" id="btn-create-rule">+ New Rule Set</button>
+    </div>
+    
+    <!-- Right Form Section -->
+    <div class="settings-form-card" id="form-container" style="display: none;">
+      <form id="rule-form">
+        <div class="row" style="margin-bottom: 24px;">
+          <label style="font-weight: 600; color: #1e293b; flex: 0 0 140px;">Rule Name</label>
+          <input type="text" name="name" placeholder="e.g. Default Rule, Software Alerts..." required style="font-weight: 600;" />
+        </div>
+        
+        <div class="form-group-title">New Opportunity Keywords</div>
+        <div class="row">
+          <label style="flex: 0 0 140px;">Keywords</label>
+          <input type="text" name="keywords" placeholder="LTA, Construction, BIM, Software, Marketing" />
+        </div>
+        <small style="color:#6b7280; display:block; margin-bottom:12px; margin-left: 148px;">Comma-separated. Case-insensitive substring match on description or agency.</small>
 
-      <h3 style="font-size:14px; margin-top:16px;">Preferred Agencies</h3>
-      <div class="row">
-        <label>Agencies</label>
-        <input type="text" name="agencies" placeholder="LTA, GovTech, MOE, URA" />
-      </div>
-      <small style="color:#6b7280; display:block; margin-bottom:16px;">Comma-separated. Case-insensitive matches published agency name.</small>
+        <div class="row">
+          <label style="flex: 0 0 140px;">Agencies</label>
+          <input type="text" name="agencies" placeholder="LTA, GovTech, MOE, URA" />
+        </div>
+        <small style="color:#6b7280; display:block; margin-bottom:12px; margin-left: 148px;">Comma-separated. Case-insensitive matches published agency name.</small>
 
-      <h3 style="font-size:14px; margin-top:16px;">Preferred Categories</h3>
-      <div class="row">
-        <label>Categories</label>
-        <input type="text" name="categories" placeholder="Services, Goods, Construction" />
-      </div>
-      <small style="color:#6b7280; display:block; margin-bottom:16px;">Comma-separated. Matches procurement category.</small>
+        <div class="row">
+          <label style="flex: 0 0 140px;">Categories</label>
+          <input type="text" name="categories" placeholder="Services, Goods, Construction" />
+        </div>
+        <small style="color:#6b7280; display:block; margin-bottom:16px; margin-left: 148px;">Comma-separated. Matches procurement category.</small>
 
-      <h3 style="font-size:14px; margin-top:24px;">Closing-Date Countdown</h3>
-      <div class="row">
-        <label>Remind before (days)</label>
-        <label style="flex-direction:row;"><input type="checkbox" name="d7" /> 7</label>
-        <label style="flex-direction:row;"><input type="checkbox" name="d3" checked /> 3</label>
-        <label style="flex-direction:row;"><input type="checkbox" name="d1" checked /> 1</label>
-      </div>
+        <div class="form-group-title">Closing-Date Countdown</div>
+        <div class="row">
+          <label style="flex: 0 0 140px;">Remind before</label>
+          <label style="flex-direction:row; justify-content: flex-start; gap: 8px; flex: initial; cursor: pointer; user-select: none;">
+            <input type="checkbox" name="d7" /> 7 days
+          </label>
+          <label style="flex-direction:row; justify-content: flex-start; gap: 8px; flex: initial; cursor: pointer; user-select: none; margin-left: 16px;">
+            <input type="checkbox" name="d3" checked /> 3 days
+          </label>
+          <label style="flex-direction:row; justify-content: flex-start; gap: 8px; flex: initial; cursor: pointer; user-select: none; margin-left: 16px;">
+            <input type="checkbox" name="d1" checked /> 1 day
+          </label>
+        </div>
 
-      <h3 style="font-size:14px; margin-top:24px;">Delivery Channels</h3>
-      <div class="row">
-        <label><input type="checkbox" name="channel_in_app" checked disabled /> In-app message center</label>
-        <small style="color:#6b7280;">(always on)</small>
-      </div>
-      <div class="row">
-        <label><input type="checkbox" name="channel_email" /> Email</label>
-        <input type="email" name="email_to" placeholder="you@example.com" />
-      </div>
-      <div class="row">
-        <label><input type="checkbox" name="channel_webhook" /> Webhook</label>
-        <input type="url" name="webhook_url" placeholder="https://open.larksuite.com/... or Slack/WeCom incoming webhook" />
-      </div>
+        <div class="form-group-title">Delivery Channels</div>
+        <div class="row">
+          <label style="flex: 0 0 140px; font-weight: 500; flex-direction: row; justify-content: flex-start; gap: 8px;"><input type="checkbox" name="channel_in_app" checked disabled /> In-app center</label>
+          <small style="color:#6b7280; margin-left: 8px;">(always on)</small>
+        </div>
+        <div class="row" style="margin-top: 10px;">
+          <label style="flex: 0 0 140px; font-weight: 500; flex-direction: row; justify-content: flex-start; gap: 8px;"><input type="checkbox" name="channel_email" /> Email</label>
+          <input type="email" name="email_to" placeholder="you@example.com" />
+        </div>
+        <div class="row" style="margin-top: 10px;">
+          <label style="flex: 0 0 140px; font-weight: 500; flex-direction: row; justify-content: flex-start; gap: 8px;"><input type="checkbox" name="channel_webhook" /> Webhook</label>
+          <input type="url" name="webhook_url" placeholder="https://open.larksuite.com/... or Slack/WeCom incoming webhook" style="font-size: 13px;" />
+        </div>
 
-      <div style="margin-top:20px;">
-        <button class="primary" type="submit">Save</button>
-        <span id="status" style="margin-left:12px; color:#059669;"></span>
-      </div>
-    </form>
+        <div style="margin-top: 32px; border-top: 1px solid #f1f5f9; padding-top: 16px; display: flex; justify-content: space-between; align-items: center;">
+          <div>
+            <button class="primary" type="submit" style="padding: 10px 24px; font-weight: 600; border-radius: 6px;">Save</button>
+            <span id="status" style="margin-left:12px; color:#059669; font-weight: 500;"></span>
+          </div>
+          <button type="button" class="btn-delete" id="btn-delete-rule">Delete Rule Set</button>
+        </div>
+      </form>
+    </div>
+    
+    <!-- Empty state when no rule is loaded -->
+    <div class="settings-form-card" id="empty-container" style="display: flex; align-items: center; justify-content: center; min-height: 300px; color: #94a3b8; font-size: 14px;">
+      Please select or create a notification rule set.
+    </div>
   </div>
 </main>
 
 <script type="module">
 import { api } from "/static/app.js";
+
 const $ = (s) => document.querySelector(s);
 const form = $("#rule-form");
 
-function applyRule(r) {
-  form.keywords.value = (r.keywords || []).join(", ");
-  form.agencies.value = (r.agencies || []).join(", ");
-  form.categories.value = (r.categories || []).join(", ");
-  form.d7.checked = r.countdown_days.includes(7);
-  form.d3.checked = r.countdown_days.includes(3);
-  form.d1.checked = r.countdown_days.includes(1);
-  form.channel_email.checked = !!r.channel_email;
-  form.email_to.value = r.email_to || "";
-  form.channel_webhook.checked = !!r.channel_webhook;
-  form.webhook_url.value = r.webhook_url || "";
+const state = {
+  rules: [],
+  selectedId: null
+};
+
+function renderSidebar() {
+  const container = $("#rule-list-container");
+  container.innerHTML = "";
+  
+  if (state.rules.length === 0) {
+    container.innerHTML = `<div style="text-align: center; color: #94a3b8; padding: 20px 0; font-size: 13px;">No rule sets</div>`;
+    return;
+  }
+  
+  state.rules.forEach(r => {
+    const item = document.createElement("div");
+    item.className = `rule-item ${r.id === state.selectedId ? "selected" : ""}`;
+    item.dataset.id = r.id;
+    
+    const summaryParts = [];
+    if (r.keywords && r.keywords.length > 0) summaryParts.push("Keywords: " + r.keywords.join(","));
+    if (r.agencies && r.agencies.length > 0) summaryParts.push("Agencies: " + r.agencies.join(","));
+    if (r.categories && r.categories.length > 0) summaryParts.push("Categories: " + r.categories.join(","));
+    const summary = summaryParts.join(" | ") || "Matches all data";
+    
+    item.innerHTML = `
+      <div class="rule-item-header">
+        <span class="rule-item-name">${escapeHTML(r.name)}</span>
+        <label class="switch" onclick="event.stopPropagation();">
+          <input type="checkbox" class="toggle-active" data-id="${r.id}" ${r.is_active ? "checked" : ""} />
+          <span class="slider"></span>
+        </label>
+      </div>
+      <div class="rule-item-summary">${escapeHTML(summary)}</div>
+    `;
+    
+    item.addEventListener("click", () => {
+      selectRule(r.id);
+    });
+    
+    container.appendChild(item);
+  });
+  
+  // Add listeners to toggle switches
+  container.querySelectorAll(".toggle-active").forEach(sw => {
+    sw.addEventListener("change", async (e) => {
+      const id = parseInt(e.target.dataset.id, 10);
+      const active = e.target.checked;
+      await toggleRuleActive(id, active);
+    });
+  });
+}
+
+function escapeHTML(s) {
+  return (s || "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" }[c]));
+}
+
+async function toggleRuleActive(ruleId, is_active) {
+  const rule = state.rules.find(r => r.id === ruleId);
+  if (!rule) return;
+  
+  const body = {
+    name: rule.name,
+    is_active: is_active,
+    keywords: rule.keywords,
+    agencies: rule.agencies,
+    categories: rule.categories,
+    countdown_days: rule.countdown_days,
+    channel_in_app: rule.channel_in_app,
+    channel_email: rule.channel_email,
+    email_to: rule.email_to,
+    channel_webhook: rule.channel_webhook,
+    webhook_url: rule.webhook_url
+  };
+  
+  try {
+    const saved = await api(`/notification-rules/${ruleId}`, { method: "PUT", body });
+    rule.is_active = saved.is_active;
+    renderSidebar();
+  } catch (err) {
+    alert("Failed to toggle status: " + err.message);
+    renderSidebar(); // revert switch visually
+  }
+}
+
+function selectRule(ruleId) {
+  state.selectedId = ruleId;
+  
+  // Highlight in sidebar
+  document.querySelectorAll(".rule-item").forEach(el => {
+    el.classList.toggle("selected", parseInt(el.dataset.id, 10) === ruleId);
+  });
+  
+  const rule = state.rules.find(r => r.id === ruleId);
+  if (!rule) {
+    $("#form-container").style.display = "none";
+    $("#empty-container").style.display = "flex";
+    return;
+  }
+  
+  $("#empty-container").style.display = "none";
+  $("#form-container").style.display = "block";
+  
+  // Load data into form
+  form.name.value = rule.name;
+  form.keywords.value = (rule.keywords || []).join(", ");
+  form.agencies.value = (rule.agencies || []).join(", ");
+  form.categories.value = (rule.categories || []).join(", ");
+  form.d7.checked = (rule.countdown_days || []).includes(7);
+  form.d3.checked = (rule.countdown_days || []).includes(3);
+  form.d1.checked = (rule.countdown_days || []).includes(1);
+  form.channel_email.checked = !!rule.channel_email;
+  form.email_to.value = rule.email_to || "";
+  form.channel_webhook.checked = !!rule.channel_webhook;
+  form.webhook_url.value = rule.webhook_url || "";
 }
 
 async function load() {
-  const r = await api("/notification-rules");
-  applyRule(r);
+  try {
+    const list = await api("/notification-rules");
+    state.rules = list;
+    if (list.length > 0) {
+      if (!state.selectedId || !list.find(r => r.id === state.selectedId)) {
+        state.selectedId = list[0].id;
+      }
+      renderSidebar();
+      selectRule(state.selectedId);
+    } else {
+      state.selectedId = null;
+      renderSidebar();
+      $("#form-container").style.display = "none";
+      $("#empty-container").style.display = "flex";
+    }
+  } catch (err) {
+    alert("Failed to load settings: " + err.message);
+  }
 }
 
 form.addEventListener("submit", async (e) => {
   e.preventDefault();
+  if (!state.selectedId) return;
+  
+  const currentRule = state.rules.find(r => r.id === state.selectedId);
+  if (!currentRule) return;
+  
   const body = {
+    name: form.name.value.trim(),
+    is_active: currentRule.is_active, // preserve current active state from sidebar toggle
     keywords: form.keywords.value.split(",").map(s => s.trim()).filter(Boolean),
     agencies: form.agencies.value.split(",").map(s => s.trim()).filter(Boolean),
     categories: form.categories.value.split(",").map(s => s.trim()).filter(Boolean),
     countdown_days: [7, 3, 1].filter(d => form[`d${d}`].checked),
     channel_in_app: true,
     channel_email: form.channel_email.checked,
-    email_to: form.email_to.value || null,
+    email_to: form.email_to.value.trim() || null,
     channel_webhook: form.channel_webhook.checked,
-    webhook_url: form.webhook_url.value || null,
+    webhook_url: form.webhook_url.value.trim() || null,
   };
-  const saved = await api("/notification-rules", { method: "PUT", body });
-  applyRule(saved);
-  $("#status").textContent = "Saved ✓";
-  setTimeout(() => $("#status").textContent = "", 2000);
+  
+  try {
+    const saved = await api(`/notification-rules/${state.selectedId}`, { method: "PUT", body });
+    // Update local state list
+    const idx = state.rules.findIndex(r => r.id === state.selectedId);
+    if (idx !== -1) {
+      state.rules[idx] = saved;
+    }
+    renderSidebar();
+    selectRule(state.selectedId);
+    
+    $("#status").textContent = "Saved ✓";
+    setTimeout(() => $("#status").textContent = "", 2000);
+  } catch (err) {
+    alert("Failed to save settings: " + err.message);
+  }
+});
+
+$("#btn-create-rule").addEventListener("click", async () => {
+  const body = {
+    name: "Rule Set " + (state.rules.length + 1),
+    is_active: true,
+    keywords: [],
+    agencies: [],
+    categories: [],
+    countdown_days: [3, 1],
+    channel_in_app: true,
+    channel_email: false,
+    email_to: null,
+    channel_webhook: false,
+    webhook_url: null
+  };
+  
+  try {
+    const newRule = await api("/notification-rules", { method: "POST", body });
+    state.rules.push(newRule);
+    state.selectedId = newRule.id;
+    renderSidebar();
+    selectRule(newRule.id);
+  } catch (err) {
+    alert("Failed to create rule set: " + err.message);
+  }
+});
+
+$("#btn-delete-rule").addEventListener("click", async () => {
+  if (!state.selectedId) return;
+  const currentRule = state.rules.find(r => r.id === state.selectedId);
+  if (!currentRule) return;
+  
+  if (!confirm(`Are you sure you want to delete rule set "${currentRule.name}"?`)) {
+    return;
+  }
+  
+  try {
+    await api(`/notification-rules/${state.selectedId}`, { method: "DELETE" });
+    const idx = state.rules.findIndex(r => r.id === state.selectedId);
+    if (idx !== -1) {
+      state.rules.splice(idx, 1);
+    }
+    
+    // Choose next rule to select
+    if (state.rules.length > 0) {
+      state.selectedId = state.rules[0].id;
+    } else {
+      state.selectedId = null;
+    }
+    
+    renderSidebar();
+    if (state.selectedId) {
+      selectRule(state.selectedId);
+    } else {
+      $("#form-container").style.display = "none";
+      $("#empty-container").style.display = "flex";
+    }
+  } catch (err) {
+    alert("Failed to delete: " + err.message);
+  }
 });
 
 load();

@@ -85,6 +85,8 @@ class OpportunityListResponse(BaseModel):
 
 
 class NotificationRuleIn(BaseModel):
+    name: str = "默认规则"
+    is_active: bool = True
     keywords: list[str] = []
     agencies: list[str] = []
     categories: list[str] = []

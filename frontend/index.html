@@ -226,19 +226,49 @@ async function refreshUnread() {
   else { badge.style.display = "none"; }
 }
 
+function getRuleColor(name) {
+  const colors = [
+    { bg: "#eff6ff", text: "#1e40af", border: "#bfdbfe" }, // blue
+    { bg: "#f0fdf4", text: "#166534", border: "#bbf7d0" }, // green
+    { bg: "#fdf2f8", text: "#9d174d", border: "#fbcfe8" }, // pink
+    { bg: "#fff7ed", text: "#9a3412", border: "#ffedd5" }, // orange
+    { bg: "#faf5ff", text: "#6b21a8", border: "#e9d5ff" }, // purple
+    { bg: "#f0fdfa", text: "#115e59", border: "#99f6e4" }, // teal
+  ];
+  if (!name) return colors[0];
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) {
+    hash = name.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  const idx = Math.abs(hash) % colors.length;
+  return colors[idx];
+}
+
 let cachedNotifications = [];
 
 function renderNotificationsInPanel() {
   const panel = $("#notif-panel");
   const alertsList = cachedNotifications.filter(n => n.type !== "System");
   
-  const listHtml = alertsList.length ? alertsList.map(n => `
+  const listHtml = alertsList.length ? alertsList.map(n => {
+    const payload = n.payload || {};
+    const ruleName = payload.rule_name;
+    let badgeHtml = "";
+    if (ruleName) {
+      const color = getRuleColor(ruleName);
+      badgeHtml = `<span style="display:inline-block; font-size:10px; font-weight:600; padding:2px 6px; border-radius:4px; border:1px solid ${color.border}; background:${color.bg}; color:${color.text}; margin-left:8px; white-space:nowrap; vertical-align:middle;">规则: ${escapeHTML(ruleName)}</span>`;
+    }
+    return `
     <div class="item ${n.read_at ? "" : "unread"}" data-id="${n.id}">
-      <div><strong>${escapeHTML(n.title)}</strong></div>
+      <div style="display:flex; justify-content:space-between; align-items:start; gap:8px;">
+        <span style="font-weight:600; line-height:1.4;">${escapeHTML(n.title)}</span>
+        ${badgeHtml}
+      </div>
       <div style="margin-top:2px;">${escapeHTML(n.body || "")}</div>
       <div style="color:#888; font-size:11px; margin-top:4px;">${fmtDate(n.created_at)}</div>
       ${n.document_no ? `<div><a href="/detail.html?doc=${encodeURIComponent(n.document_no)}">→ ${n.document_no}</a></div>` : ""}
-    </div>`).join("") : `<div class="empty">No new notifications.</div>`;
+    </div>`;
+  }).join("") : `<div class="empty">No new notifications.</div>`;
     
   panel.innerHTML = `
     <div style="padding:8px 12px; display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #eee; background:#fafafa;">

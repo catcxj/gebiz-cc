@@ -19,7 +19,9 @@ class NotificationRule(Base):
     __tablename__ = "notification_rules"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    user_id: Mapped[str] = mapped_column(String(64), default="default", unique=True, index=True)
+    user_id: Mapped[str] = mapped_column(String(64), default="default", index=True)
+    name: Mapped[str] = mapped_column(String(64), default="默认规则")
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     keywords: Mapped[list] = mapped_column(JSON, default=list)            # ["LTA", "Construction", ...]
     agencies: Mapped[list] = mapped_column(JSON, default=list)            # ["LTA", "GovTech", ...]
     categories: Mapped[list] = mapped_column(JSON, default=list)          # ["Services", "Goods", ...]

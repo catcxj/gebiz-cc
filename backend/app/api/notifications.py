@@ -12,23 +12,55 @@ from .deps import current_user_id
 router = APIRouter(tags=["notifications"])
 
 
-@router.get("/notification-rules", response_model=NotificationRuleOut)
-def get_rule(db: Session = Depends(get_db), user_id: str = Depends(current_user_id)):
-    rule = db.query(NotificationRule).filter(NotificationRule.user_id == user_id).one_or_none()
-    if rule is None:
-        rule = NotificationRule(user_id=user_id, keywords=[], agencies=[], categories=[], countdown_days=[3, 1])
+@router.get("/notification-rules", response_model=list[NotificationRuleOut])
+def list_rules(db: Session = Depends(get_db), user_id: str = Depends(current_user_id)):
+    rules = db.query(NotificationRule).filter(NotificationRule.user_id == user_id).all()
+    if not rules:
+        rule = NotificationRule(
+            user_id=user_id,
+            name="默认规则",
+            is_active=True,
+            keywords=[],
+            agencies=[],
+            categories=[],
+            countdown_days=[3, 1]
+        )
         db.add(rule)
         db.commit()
         db.refresh(rule)
+        rules = [rule]
+    return [NotificationRuleOut.model_validate(r) for r in rules]
+
+
+@router.post("/notification-rules", response_model=NotificationRuleOut)
+def create_rule(body: NotificationRuleIn, db: Session = Depends(get_db), user_id: str = Depends(current_user_id)):
+    rule = NotificationRule(
+        user_id=user_id,
+        name=body.name,
+        is_active=body.is_active,
+        keywords=body.keywords,
+        agencies=body.agencies,
+        categories=body.categories,
+        countdown_days=body.countdown_days,
+        channel_in_app=body.channel_in_app,
+        channel_email=body.channel_email,
+        email_to=body.email_to,
+        channel_webhook=body.channel_webhook,
+        webhook_url=body.webhook_url
+    )
+    db.add(rule)
+    db.commit()
+    db.refresh(rule)
     return NotificationRuleOut.model_validate(rule)
 
 
-@router.put("/notification-rules", response_model=NotificationRuleOut)
-def put_rule(body: NotificationRuleIn, db: Session = Depends(get_db), user_id: str = Depends(current_user_id)):
-    rule = db.query(NotificationRule).filter(NotificationRule.user_id == user_id).one_or_none()
+@router.put("/notification-rules/{rule_id}", response_model=NotificationRuleOut)
+def put_rule(rule_id: int, body: NotificationRuleIn, db: Session = Depends(get_db), user_id: str = Depends(current_user_id)):
+    rule = db.query(NotificationRule).filter(NotificationRule.id == rule_id, NotificationRule.user_id == user_id).one_or_none()
     if rule is None:
-        rule = NotificationRule(user_id=user_id)
-        db.add(rule)
+        raise HTTPException(404, "Notification rule not found")
+    rule.name = body.name
+    rule.is_active = body.is_active
     rule.keywords = body.keywords
     rule.agencies = body.agencies
     rule.categories = body.categories
@@ -41,6 +73,16 @@ def put_rule(body: NotificationRuleIn, db: Session = Depends(get_db), user_id: s
     db.commit()
     db.refresh(rule)
     return NotificationRuleOut.model_validate(rule)
+
+
+@router.delete("/notification-rules/{rule_id}", status_code=204)
+def delete_rule(rule_id: int, db: Session = Depends(get_db), user_id: str = Depends(current_user_id)):
+    rule = db.query(NotificationRule).filter(NotificationRule.id == rule_id, NotificationRule.user_id == user_id).one_or_none()
+    if rule is None:
+        raise HTTPException(404, "Notification rule not found")
+    db.delete(rule)
+    db.commit()
+    return None
 
 
 @router.get("/notifications", response_model=list[NotificationOut])

@@ -191,11 +191,11 @@ def _notify_if_match(db: Session, item: ScrapedOpportunity) -> None:
         if match:
             dispatch(db, user_id, NotificationPayload(
                 type=NotificationType.NewMatch,
-                title=f"[新商机] {item.document_no}",
+                title=f"[新商机 - {rule.name}] {item.document_no}",
                 body=f"{item.agency or ''} — {item.description}",
                 document_no=item.document_no,
                 payload={"agency": item.agency, "closing_at": item.closing_at.isoformat() if item.closing_at else None},
-            ))
+            ), rule=rule)
 
 
 def _notify_status_changed(db: Session, item: ScrapedOpportunity) -> None:

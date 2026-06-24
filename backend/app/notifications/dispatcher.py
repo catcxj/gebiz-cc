@@ -21,38 +21,85 @@ class NotificationPayload:
     payload: Optional[dict] = None
 
 
-def dispatch(db: Session, user_id: str, msg: NotificationPayload) -> None:
+def dispatch(db: Session, user_id: str, msg: NotificationPayload, rule: Optional[NotificationRule] = None) -> None:
     """
     Deliver one notification to all configured channels for a user.
 
-    In-app messages are persisted as Notification rows so the UI message
-    center can list them. Email/webhook are best-effort (exceptions are
-    logged, not propagated — a single channel failure must not block others).
+    If a specific `rule` is provided, we send via that rule.
+    If no specific `rule` is provided (e.g. for StatusChanged or System), we aggregate
+    all active rules' settings to send to in-app/email/webhook destinations.
     """
-    rule = db.query(NotificationRule).filter(NotificationRule.user_id == user_id).one_or_none()
-
-    if rule is None or rule.channel_in_app:
-        db.add(Notification(
-            user_id=user_id,
-            type=msg.type,
-            title=msg.title,
-            body=msg.body,
-            document_no=msg.document_no,
-            payload=msg.payload,
-        ))
-        db.commit()
-
     if rule is None:
-        return
+        rules = db.query(NotificationRule).filter(
+            NotificationRule.user_id == user_id,
+            NotificationRule.is_active == True
+        ).all()
+        
+        # If there are no active rules, default to in-app only
+        if not rules:
+            db.add(Notification(
+                user_id=user_id,
+                type=msg.type,
+                title=msg.title,
+                body=msg.body,
+                document_no=msg.document_no,
+                payload=msg.payload,
+            ))
+            db.commit()
+            return
 
-    if rule.channel_email and rule.email_to:
-        try:
-            EmailChannel(rule.email_to).send(msg.title, msg.body, msg.payload)
-        except Exception:
-            log.exception("email channel failed")
+        if any(r.channel_in_app for r in rules):
+            db.add(Notification(
+                user_id=user_id,
+                type=msg.type,
+                title=msg.title,
+                body=msg.body,
+                document_no=msg.document_no,
+                payload=msg.payload,
+            ))
+            db.commit()
 
-    if rule.channel_webhook and rule.webhook_url:
-        try:
-            WebhookChannel(rule.webhook_url).send(msg.title, msg.body, msg.payload)
-        except Exception:
-            log.exception("webhook channel failed")
+        # Deduplicated emails
+        emails = {r.email_to.strip() for r in rules if r.channel_email and r.email_to and r.email_to.strip()}
+        for email in emails:
+            try:
+                EmailChannel(email).send(msg.title, msg.body, msg.payload)
+            except Exception:
+                log.exception("email channel failed")
+
+        # Deduplicated webhooks
+        webhooks = {r.webhook_url.strip() for r in rules if r.channel_webhook and r.webhook_url and r.webhook_url.strip()}
+        for url in webhooks:
+            try:
+                WebhookChannel(url).send(msg.title, msg.body, msg.payload)
+            except Exception:
+                log.exception("webhook channel failed")
+    else:
+        # Send using the specific rule
+        if rule.channel_in_app:
+            # Inject rule name and rule ID into payload for grouping and frontend rendering
+            payload = dict(msg.payload or {})
+            payload["rule_name"] = rule.name
+            payload["rule_id"] = rule.id
+
+            db.add(Notification(
+                user_id=user_id,
+                type=msg.type,
+                title=msg.title,
+                body=msg.body,
+                document_no=msg.document_no,
+                payload=payload,
+            ))
+            db.commit()
+
+        if rule.channel_email and rule.email_to:
+            try:
+                EmailChannel(rule.email_to).send(msg.title, msg.body, msg.payload)
+            except Exception:
+                log.exception("email channel failed")
+
+        if rule.channel_webhook and rule.webhook_url:
+            try:
+                WebhookChannel(rule.webhook_url).send(msg.title, msg.body, msg.payload)
+            except Exception:
+                log.exception("webhook channel failed")
