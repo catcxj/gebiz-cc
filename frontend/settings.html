@@ -255,6 +255,10 @@
           <label style="flex: 0 0 140px; font-weight: 500; flex-direction: row; justify-content: flex-start; gap: 8px;"><input type="checkbox" name="channel_webhook" /> Webhook</label>
           <input type="url" name="webhook_url" placeholder="https://open.larksuite.com/... or Slack/WeCom incoming webhook" style="font-size: 13px;" />
         </div>
+        <div class="row" style="margin-top: 8px;">
+          <label style="flex: 0 0 140px;"></label>
+          <input type="text" name="webhook_keyword" placeholder="Webhook custom safety keyword (optional, e.g. for Feishu/WeCom security checks)" style="font-size: 13px;" />
+        </div>
 
         <div style="margin-top: 32px; border-top: 1px solid #f1f5f9; padding-top: 16px; display: flex; justify-content: space-between; align-items: center;">
           <div>
@@ -351,7 +355,8 @@ async function toggleRuleActive(ruleId, is_active) {
     channel_email: rule.channel_email,
     email_to: rule.email_to,
     channel_webhook: rule.channel_webhook,
-    webhook_url: rule.webhook_url
+    webhook_url: rule.webhook_url,
+    webhook_keyword: rule.webhook_keyword
   };
   
   try {
@@ -361,6 +366,14 @@ async function toggleRuleActive(ruleId, is_active) {
   } catch (err) {
     alert("Failed to toggle status: " + err.message);
     renderSidebar(); // revert switch visually
+  }
+}
+
+function toggleWebhookKeywordVisibility() {
+  const isChecked = form.channel_webhook.checked;
+  const keywordRow = form.webhook_keyword.closest(".row");
+  if (keywordRow) {
+    keywordRow.style.display = isChecked ? "flex" : "none";
   }
 }
 
@@ -394,6 +407,9 @@ function selectRule(ruleId) {
   form.email_to.value = rule.email_to || "";
   form.channel_webhook.checked = !!rule.channel_webhook;
   form.webhook_url.value = rule.webhook_url || "";
+  form.webhook_keyword.value = rule.webhook_keyword || "";
+  
+  toggleWebhookKeywordVisibility();
 }
 
 async function load() {
@@ -436,6 +452,7 @@ form.addEventListener("submit", async (e) => {
     email_to: form.email_to.value.trim() || null,
     channel_webhook: form.channel_webhook.checked,
     webhook_url: form.webhook_url.value.trim() || null,
+    webhook_keyword: form.webhook_keyword.value.trim() || null,
   };
   
   try {
@@ -467,7 +484,8 @@ $("#btn-create-rule").addEventListener("click", async () => {
     channel_email: false,
     email_to: null,
     channel_webhook: false,
-    webhook_url: null
+    webhook_url: null,
+    webhook_keyword: null
   };
   
   try {
@@ -515,6 +533,8 @@ $("#btn-delete-rule").addEventListener("click", async () => {
     alert("Failed to delete: " + err.message);
   }
 });
+
+form.channel_webhook.addEventListener("change", toggleWebhookKeywordVisibility);
 
 load();
 </script>

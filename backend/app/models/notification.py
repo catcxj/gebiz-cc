@@ -31,6 +31,7 @@ class NotificationRule(Base):
     email_to: Mapped[str | None] = mapped_column(String(256))
     channel_webhook: Mapped[bool] = mapped_column(Boolean, default=False)
     webhook_url: Mapped[str | None] = mapped_column(String(512))
+    webhook_keyword: Mapped[str | None] = mapped_column(String(128))
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 

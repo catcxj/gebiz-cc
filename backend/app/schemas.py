@@ -96,6 +96,7 @@ class NotificationRuleIn(BaseModel):
     email_to: Optional[str] = None
     channel_webhook: bool = False
     webhook_url: Optional[str] = None
+    webhook_keyword: Optional[str] = None
 
 
 class NotificationRuleOut(NotificationRuleIn):

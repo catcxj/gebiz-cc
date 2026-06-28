@@ -56,19 +56,25 @@ class WebhookChannel:
     """
     name = "webhook"
 
-    def __init__(self, url: str):
+    def __init__(self, url: str, keyword: str | None = None):
         self.url = url
+        self.keyword = keyword
 
     def send(self, title, body, payload=None):
+        # Prepend keyword to text/title so it passes security keyword verification checks (e.g. for Feishu / WeCom)
+        full_title = f"[{self.keyword}] {title}" if self.keyword else title
+        full_text = f"{self.keyword}\n{title}\n{body}" if self.keyword else f"{title}\n{body}"
+
         try:
             httpx.post(
                 self.url,
                 json={
-                    "title": title,
+                    "title": full_title,
                     "text": body,
+                    "keyword": self.keyword,
                     "payload": payload or {},
                     "msg_type": "text",
-                    "content": {"text": f"{title}\n{body}"},
+                    "content": {"text": full_text},
                 },
                 timeout=10,
             )

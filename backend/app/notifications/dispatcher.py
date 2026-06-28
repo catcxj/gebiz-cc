@@ -67,11 +67,16 @@ def dispatch(db: Session, user_id: str, msg: NotificationPayload, rule: Optional
             except Exception:
                 log.exception("email channel failed")
 
-        # Deduplicated webhooks
-        webhooks = {r.webhook_url.strip() for r in rules if r.channel_webhook and r.webhook_url and r.webhook_url.strip()}
-        for url in webhooks:
+        # Deduplicated webhooks: map URL to the first active rule's keyword
+        webhooks = {}
+        for r in rules:
+            if r.channel_webhook and r.webhook_url and r.webhook_url.strip():
+                url = r.webhook_url.strip()
+                if url not in webhooks:
+                    webhooks[url] = r.webhook_keyword
+        for url, keyword in webhooks.items():
             try:
-                WebhookChannel(url).send(msg.title, msg.body, msg.payload)
+                WebhookChannel(url, keyword).send(msg.title, msg.body, msg.payload)
             except Exception:
                 log.exception("webhook channel failed")
     else:
@@ -100,6 +105,6 @@ def dispatch(db: Session, user_id: str, msg: NotificationPayload, rule: Optional
 
         if rule.channel_webhook and rule.webhook_url:
             try:
-                WebhookChannel(rule.webhook_url).send(msg.title, msg.body, msg.payload)
+                WebhookChannel(rule.webhook_url, rule.webhook_keyword).send(msg.title, msg.body, msg.payload)
             except Exception:
                 log.exception("webhook channel failed")
