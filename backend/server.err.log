@@ -1,0 +1,13 @@
+INFO:     Started server process [16092]
+INFO:     Waiting for application startup.
+2026-06-27 22:43:49,458 INFO  apscheduler.scheduler: Adding job tentatively -- it will be properly scheduled when the scheduler starts
+2026-06-27 22:43:49,458 INFO  apscheduler.scheduler: Adding job tentatively -- it will be properly scheduled when the scheduler starts
+2026-06-27 22:43:49,459 INFO  apscheduler.scheduler: Added job "run_sync" to job store "default"
+2026-06-27 22:43:49,460 INFO  apscheduler.scheduler: Added job "run_closing_reminders" to job store "default"
+2026-06-27 22:43:49,460 INFO  apscheduler.scheduler: Scheduler started
+2026-06-27 22:43:49,461 INFO  app.scheduler.scheduler: scheduler started: scrape cron=0 0 * * *
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+2026-06-27 23:05:00,003 INFO  apscheduler.executors.default: Running job "run_closing_reminders (trigger: cron[month='*', day='*', day_of_week='*', hour='*', minute='5'], next run at: 2026-06-27 23:05:00 +08)" (scheduled at 2026-06-27 23:05:00+08:00)
+2026-06-27 23:05:00,017 INFO  app.services.alerts: closing reminders sent=0
+2026-06-27 23:05:00,017 INFO  apscheduler.executors.default: Job "run_closing_reminders (trigger: cron[month='*', day='*', day_of_week='*', hour='*', minute='5'], next run at: 2026-06-28 00:05:00 +08)" executed successfully

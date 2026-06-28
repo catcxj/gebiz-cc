@@ -1,12 +1,17 @@
 from __future__ import annotations
 
-from datetime import datetime
-from fastapi import APIRouter, Depends, HTTPException
+from datetime import datetime, date
+from typing import Optional
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import or_, func
 from sqlalchemy.orm import Session
 
 from ..database import get_db
 from ..models import NotificationRule, Notification
-from ..schemas import NotificationRuleIn, NotificationRuleOut, NotificationOut
+from ..models.notification import NotificationType
+from ..schemas import (
+    NotificationRuleIn, NotificationRuleOut, NotificationOut, NotificationListResponse,
+)
 from .deps import current_user_id
 
 router = APIRouter(tags=["notifications"])
@@ -96,6 +101,52 @@ def list_notifications(
     if unread_only:
         q = q.filter(Notification.read_at.is_(None))
     return [NotificationOut.model_validate(n) for n in q.order_by(Notification.created_at.desc()).limit(limit).all()]
+
+
+@router.get("/notifications/search", response_model=NotificationListResponse)
+def search_notifications(
+    db: Session = Depends(get_db),
+    user_id: str = Depends(current_user_id),
+    type: Optional[NotificationType] = None,
+    read_status: Optional[str] = None,
+    q: Optional[str] = None,
+    document_no: Optional[str] = None,
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
+    page: int = Query(1, ge=1),
+    size: int = Query(20, ge=1, le=200),
+):
+    query = db.query(Notification).filter(Notification.user_id == user_id)
+
+    if type:
+        query = query.filter(Notification.type == type)
+    if read_status:
+        rs = read_status.lower()
+        if rs == "unread":
+            query = query.filter(Notification.read_at.is_(None))
+        elif rs == "read":
+            query = query.filter(Notification.read_at.is_not(None))
+    if document_no:
+        query = query.filter(Notification.document_no == document_no)
+    if q:
+        like = f"%{q}%"
+        query = query.filter(or_(
+            Notification.title.ilike(like),
+            Notification.body.ilike(like),
+            Notification.document_no.ilike(like),
+        ))
+    if date_from:
+        query = query.filter(Notification.created_at >= datetime.combine(date_from, datetime.min.time()))
+    if date_to:
+        query = query.filter(Notification.created_at <= datetime.combine(date_to, datetime.max.time()))
+
+    total = query.with_entities(func.count(Notification.id)).scalar() or 0
+    rows = (
+        query.order_by(Notification.created_at.desc())
+        .offset((page - 1) * size).limit(size).all()
+    )
+    items = [NotificationOut.model_validate(n) for n in rows]
+    return NotificationListResponse(total=total, page=page, size=size, items=items)
 
 
 @router.patch("/notifications/{nid}/read", status_code=204)

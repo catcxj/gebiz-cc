@@ -62,6 +62,10 @@ if frontend_dir.exists():
     def suppliers_page():
         return FileResponse(str(frontend_dir / "suppliers.html"))
 
+    @app.get("/notifications.html")
+    def notifications_page():
+        return FileResponse(str(frontend_dir / "notifications.html"))
+
 
 @app.get("/health")
 def health():

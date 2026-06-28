@@ -119,6 +119,13 @@ class NotificationOut(BaseModel):
     read_at: Optional[datetime]
 
 
+class NotificationListResponse(BaseModel):
+    total: int
+    page: int
+    size: int
+    items: list[NotificationOut]
+
+
 class ScrapeLogOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

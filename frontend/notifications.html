@@ -1,0 +1,253 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>GeBIZ Monitor — Notifications</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+  <style>
+    .type-pill { display:inline-block; padding:2px 8px; border-radius:10px; font-size:11px; font-weight:600; white-space:nowrap; }
+    .type-NewMatch { background:#dbeafe; color:#1e40af; }
+    .type-ClosingSoon { background:#fef3c7; color:#92400e; }
+    .type-StatusChanged { background:#e0e7ff; color:#4338ca; }
+    .type-System { background:#f3f4f6; color:#374151; }
+    .read-pill { display:inline-block; padding:2px 8px; border-radius:10px; font-size:11px; font-weight:600; }
+    .read-pill.unread { background:#fee2e2; color:#991b1b; }
+    .read-pill.read { background:#d1fae5; color:#065f46; }
+    .notif-row { cursor: pointer; }
+    .notif-row.unread { background:#eff6ff; }
+    .notif-row.unread:hover { background:#dbeafe; }
+    .notif-row td:first-child { white-space: nowrap; }
+    .notif-title { font-weight: 600; color: #1f2937; }
+    .notif-row.unread .notif-title { font-weight: 700; }
+    .notif-body { color: #4b5563; font-size: 13px; margin-top: 2px; }
+    .notif-meta { color: #9ca3af; font-size: 11px; margin-top: 2px; }
+    .rule-tag { display:inline-block; font-size:10px; font-weight:600; padding:2px 6px; border-radius:4px; border:1px solid #bfdbfe; background:#eff6ff; color:#1e40af; margin-left:6px; white-space:nowrap; vertical-align:middle; }
+    .toolbar { display:flex; justify-content:space-between; align-items:center; margin-bottom: 8px; }
+    .toolbar .actions { display:flex; gap:8px; align-items:center; }
+    button.primary { background:#1e40af; color:#fff; border:none; padding:8px 14px; border-radius:4px; cursor:pointer; font-size:13px; }
+    button.primary:hover { background:#1e3a8a; }
+    button.secondary { background:#e5e7eb; color:#1f1f1f; border:none; padding:8px 14px; border-radius:4px; cursor:pointer; font-size:13px; }
+  </style>
+</head>
+<body>
+<header>
+  <h1>GeBIZ Monitor</h1>
+  <nav>
+    <a href="/">Dashboard</a>
+    <a href="/suppliers.html">Supplier Master</a>
+    <a href="/notifications.html" style="font-weight:bold; opacity:1;">Notifications</a>
+    <a href="/settings.html">Notification Settings</a>
+  </nav>
+</header>
+
+<main>
+  <form class="filters" id="filters">
+    <label>Type
+      <select name="type">
+        <option value="">All</option>
+        <option value="NewMatch">NewMatch</option>
+        <option value="ClosingSoon">ClosingSoon</option>
+        <option value="StatusChanged">StatusChanged</option>
+        <option value="System">System</option>
+      </select>
+    </label>
+    <label>Read Status
+      <select name="read_status">
+        <option value="">All</option>
+        <option value="unread">Unread</option>
+        <option value="read">Read</option>
+      </select>
+    </label>
+    <label>Created From <input type="date" name="date_from" /></label>
+    <label>To <input type="date" name="date_to" /></label>
+    <label>Keyword <input type="text" name="q" placeholder="title, body or doc no" /></label>
+    <label>Document No <input type="text" name="document_no" placeholder="exact doc no" /></label>
+    <button type="submit">Search</button>
+    <button type="button" class="secondary" id="btn-reset">Reset</button>
+  </form>
+
+  <div class="toolbar">
+    <span id="summary" style="color:#4b5563; font-size:13px;"></span>
+    <div class="actions">
+      <button class="secondary" id="btn-refresh">Refresh</button>
+      <button class="primary" id="btn-read-all">Mark all read</button>
+    </div>
+  </div>
+
+  <div id="list-wrap"></div>
+
+  <div class="pagination">
+    <span id="total"></span>
+    <button id="prev">Prev</button>
+    <span id="page"></span>
+    <button id="next">Next</button>
+    <span class="jump-wrap" style="margin-left: 8px; display: inline-flex; align-items: center; gap: 6px; font-size: 14px; color: #4b5563;">
+      <span>| &nbsp; Go to</span>
+      <input type="number" id="jump-page" min="1" style="width: 50px; padding: 5px; border: 1px solid #d1d5db; border-radius: 4px; font-size: 13px; text-align: center;" />
+      <button id="btn-jump">Go</button>
+    </span>
+  </div>
+</main>
+
+<script type="module">
+import { api, fmtDate, qs } from "/static/app.js";
+
+const state = { page: 1, size: 20, total: 0 };
+const $ = (s) => document.querySelector(s);
+
+function readFilters() {
+  const f = $("#filters");
+  const fd = new FormData(f);
+  const obj = {};
+  fd.forEach((v, k) => { if (v) obj[k] = v; });
+  return obj;
+}
+
+async function load() {
+  const filters = readFilters();
+  const data = await api("/notifications/search" + qs({ ...filters, page: state.page, size: state.size }));
+  state.total = data.total;
+  renderList(data.items);
+
+  const totalPages = Math.max(1, Math.ceil(data.total / state.size));
+  $("#total").textContent = `${data.total} result(s)`;
+  $("#page").textContent = `page ${state.page} / ${totalPages}`;
+  $("#prev").disabled = state.page <= 1;
+  $("#next").disabled = state.page * state.size >= data.total;
+  $("#summary").textContent = data.total ? `Showing ${data.items.length} of ${data.total}` : "";
+
+  const jumpInput = $("#jump-page");
+  if (jumpInput) {
+    jumpInput.max = totalPages;
+    jumpInput.value = state.page;
+  }
+}
+
+function getRuleColor(name) {
+  const colors = [
+    { bg: "#eff6ff", text: "#1e40af", border: "#bfdbfe" },
+    { bg: "#f0fdf4", text: "#166534", border: "#bbf7d0" },
+    { bg: "#fdf2f8", text: "#9d174d", border: "#fbcfe8" },
+    { bg: "#fff7ed", text: "#9a3412", border: "#ffedd5" },
+    { bg: "#faf5ff", text: "#6b21a8", border: "#e9d5ff" },
+    { bg: "#f0fdfa", text: "#115e59", border: "#99f6e4" },
+  ];
+  if (!name) return colors[0];
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) hash = name.charCodeAt(i) + ((hash << 5) - hash);
+  return colors[Math.abs(hash) % colors.length];
+}
+
+function escapeHTML(s) { return (s || "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" }[c])); }
+
+function renderList(items) {
+  if (!items.length) {
+    $("#list-wrap").innerHTML = `<div class="empty">No notifications match.</div>`;
+    return;
+  }
+  const rows = items.map(n => {
+    const payload = n.payload || {};
+    const ruleName = payload.rule_name;
+    let badgeHtml = "";
+    if (ruleName) {
+      const c = getRuleColor(ruleName);
+      badgeHtml = `<span class="rule-tag" style="border:1px solid ${c.border}; background:${c.bg}; color:${c.text};">规则: ${escapeHTML(ruleName)}</span>`;
+    }
+    const docLink = n.document_no
+      ? `<a href="/detail.html?doc=${encodeURIComponent(n.document_no)}" onclick="event.stopPropagation();">${escapeHTML(n.document_no)}</a>`
+      : "—";
+    const readClass = n.read_at ? "read" : "unread";
+    const readLabel = n.read_at ? "Read" : "Unread";
+    return `<tr class="notif-row ${readClass}" data-id="${n.id}">
+      <td><span class="type-pill type-${n.type}">${n.type}</span></td>
+      <td>
+        <div class="notif-title">${escapeHTML(n.title)}${badgeHtml}</div>
+        <div class="notif-body">${escapeHTML(n.body || "")}</div>
+        <div class="notif-meta">${fmtDate(n.created_at)}</div>
+      </td>
+      <td style="font-family:monospace; font-size:12px;">${docLink}</td>
+      <td><span class="read-pill ${readClass}">${readLabel}</span></td>
+    </tr>`;
+  }).join("");
+  $("#list-wrap").innerHTML = `<table>
+    <thead><tr><th>Type</th><th>Content</th><th>Document No.</th><th>Status</th></tr></thead>
+    <tbody>${rows}</tbody></table>`;
+
+  $("#list-wrap").querySelectorAll(".notif-row.unread").forEach(el => {
+    el.addEventListener("click", async () => {
+      await api(`/notifications/${el.dataset.id}/read`, { method: "PATCH" });
+      el.classList.remove("unread");
+      el.classList.add("read");
+      const pill = el.querySelector(".read-pill");
+      if (pill) { pill.classList.remove("unread"); pill.classList.add("read"); pill.textContent = "Read"; }
+      el.querySelector(".notif-title").style.fontWeight = "600";
+    });
+  });
+}
+
+function applyUrlToFormAndState() {
+  const params = new URLSearchParams(window.location.search);
+  const pageParam = parseInt(params.get("page"), 10);
+  state.page = (!isNaN(pageParam) && pageParam > 0) ? pageParam : 1;
+  const f = $("#filters");
+  if (f) {
+    f.type.value = params.get("type") || "";
+    f.read_status.value = params.get("read_status") || "";
+    f.date_from.value = params.get("date_from") || "";
+    f.date_to.value = params.get("date_to") || "";
+    f.q.value = params.get("q") || "";
+    f.document_no.value = params.get("document_no") || "";
+  }
+}
+
+function updateUrlAndLoad() {
+  const filters = readFilters();
+  const params = { ...filters, page: state.page };
+  const query = qs(params);
+  history.pushState(null, "", window.location.pathname + query);
+  load();
+}
+
+window.addEventListener("popstate", () => { applyUrlToFormAndState(); load(); });
+
+$("#filters").addEventListener("submit", (e) => { e.preventDefault(); state.page = 1; updateUrlAndLoad(); });
+$("#prev").addEventListener("click", () => { if (state.page > 1) { state.page--; updateUrlAndLoad(); }});
+$("#next").addEventListener("click", () => { state.page++; updateUrlAndLoad(); });
+
+$("#btn-reset").addEventListener("click", () => {
+  $("#filters").reset();
+  state.page = 1;
+  history.pushState(null, "", window.location.pathname);
+  load();
+});
+
+$("#btn-refresh").addEventListener("click", () => load());
+
+$("#btn-read-all").addEventListener("click", async () => {
+  await api("/notifications/read-all", { method: "POST" });
+  await load();
+});
+
+function handleJump() {
+  const jumpInput = $("#jump-page");
+  const val = parseInt(jumpInput.value, 10);
+  const totalPages = Math.max(1, Math.ceil(state.total / state.size));
+  if (isNaN(val) || val < 1 || val > totalPages) {
+    alert(`Please enter a valid page number between 1 and ${totalPages}.`);
+    jumpInput.value = state.page;
+    return;
+  }
+  state.page = val;
+  updateUrlAndLoad();
+}
+$("#btn-jump").addEventListener("click", handleJump);
+$("#jump-page").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); handleJump(); }});
+
+async function init() {
+  applyUrlToFormAndState();
+  await load();
+}
+init();
+</script>
+</body>
+</html>
