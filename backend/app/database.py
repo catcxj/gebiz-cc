@@ -48,6 +48,9 @@ def init_db():
             if "categories" not in rule_columns:
                 conn.execute(text("ALTER TABLE notification_rules ADD COLUMN categories JSON DEFAULT '[]'"))
                 conn.commit()
+            if "webhook_keyword" not in rule_columns:
+                conn.execute(text("ALTER TABLE notification_rules ADD COLUMN webhook_keyword VARCHAR(128)"))
+                conn.commit()
 
             # Re-fetch columns to check for 'name' column migration
             rule_columns = [col["name"] for col in inspector.get_columns("notification_rules")]
