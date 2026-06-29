@@ -51,7 +51,8 @@ def create_rule(body: NotificationRuleIn, db: Session = Depends(get_db), user_id
         channel_email=body.channel_email,
         email_to=body.email_to,
         channel_webhook=body.channel_webhook,
-        webhook_url=body.webhook_url
+        webhook_url=body.webhook_url,
+        webhook_keyword=body.webhook_keyword
     )
     db.add(rule)
     db.commit()
@@ -75,6 +76,7 @@ def put_rule(rule_id: int, body: NotificationRuleIn, db: Session = Depends(get_d
     rule.email_to = body.email_to
     rule.channel_webhook = body.channel_webhook
     rule.webhook_url = body.webhook_url
+    rule.webhook_keyword = body.webhook_keyword
     db.commit()
     db.refresh(rule)
     return NotificationRuleOut.model_validate(rule)
