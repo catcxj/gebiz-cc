@@ -32,7 +32,7 @@ class BaseScraper(ABC):
     """
 
     @abstractmethod
-    async def fetch(self) -> AsyncIterator[ScrapedOpportunity]:
+    async def fetch(self, existing_ids: set[str] | None = None) -> AsyncIterator[ScrapedOpportunity]:
         ...
 
     @abstractmethod

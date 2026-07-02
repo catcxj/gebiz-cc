@@ -76,7 +76,7 @@ class GeBIZScraper(BaseScraper):
             """,
         )
 
-    async def fetch(self) -> AsyncIterator[ScrapedOpportunity]:
+    async def fetch(self, existing_ids: set[str] | None = None) -> AsyncIterator[ScrapedOpportunity]:
         from playwright.async_api import async_playwright
 
         log.info("scrape: opening %s", self.LISTING_URL)
@@ -104,18 +104,74 @@ class GeBIZScraper(BaseScraper):
 
             await page.wait_for_selector(self.TITLE_ANCHOR, timeout=15000)
 
+            async def scrape_tab_pages(status: OpportunityStatus) -> list[ScrapedOpportunity]:
+                tab_items = []
+                page_num = 1
+                while True:
+                    log.info("scrape: parsing page %d for status %s", page_num, status.value)
+                    raw_rows = await self._parse_visible_rows(page)
+                    
+                    stop_scraping = False
+                    for r in raw_rows:
+                        item = self._parse_row(r)
+                        if item:
+                            item.status = status
+                            if existing_ids and item.document_no in existing_ids:
+                                log.info("Found existing document %s. Stopping pagination for status %s.", item.document_no, status.value)
+                                stop_scraping = True
+                                break
+                            tab_items.append(item)
+                    
+                    if stop_scraping:
+                        break
+                        
+                    # Find next button
+                    next_btn_selector = 'input.formRepeatPagination2_NAVIGATION-BUTTON[id*="_Next_"]'
+                    next_btn = page.locator(next_btn_selector)
+                    if await next_btn.count() > 0:
+                        is_disabled = await next_btn.first.evaluate("el => el.disabled")
+                        if is_disabled:
+                            log.info("Next button is disabled. Reached the last page.")
+                            break
+                        
+                        # Get first document's href on current page to track transition
+                        first_doc_selector = f"{self.ROW_SELECTOR} {self.TITLE_ANCHOR}"
+                        first_doc_el = page.locator(first_doc_selector).first
+                        current_first_doc = ""
+                        if await first_doc_el.count() > 0:
+                            current_first_doc = await first_doc_el.evaluate("el => el.getAttribute('href')")
+                        
+                        log.info("Clicking Next button to go to page %d...", page_num + 1)
+                        await next_btn.first.click()
+                        
+                        # Wait for page update: either the first document's href changes or timeout
+                        updated = False
+                        for _ in range(30): # Wait up to 6 seconds (30 * 200ms)
+                            await page.wait_for_timeout(200)
+                            if current_first_doc:
+                                new_first_doc_el = page.locator(first_doc_selector).first
+                                if await new_first_doc_el.count() > 0:
+                                    new_first_doc = await new_first_doc_el.evaluate("el => el.getAttribute('href')")
+                                    if new_first_doc != current_first_doc:
+                                        updated = True
+                                        break
+                        if not updated:
+                            await page.wait_for_timeout(2000)
+                        
+                        page_num += 1
+                    else:
+                        log.info("No Next button found. Single page tab.")
+                        break
+                return tab_items
+
             items: list[ScrapedOpportunity] = []
 
             # 1. Scrape Open tab (default active tab)
             try:
                 log.info("scrape: parsing Open tab")
-                raw_rows = await self._parse_visible_rows(page)
-                for r in raw_rows:
-                    item = self._parse_row(r)
-                    if item:
-                        item.status = OpportunityStatus.Open
-                        items.append(item)
-                log.info("scrape: Open tab parsed %d items", len(raw_rows))
+                open_items = await scrape_tab_pages(OpportunityStatus.Open)
+                items.extend(open_items)
+                log.info("scrape: Open tab parsed %d items", len(open_items))
             except Exception as e:
                 log.exception("Failed to scrape Open tab")
 
@@ -153,13 +209,9 @@ class GeBIZScraper(BaseScraper):
                             log.info("No items or title anchors found in sub-tab %s", name)
                             continue
 
-                        raw_rows = await self._parse_visible_rows(page)
-                        log.info("scrape: sub-tab %s parsed %d items", name, len(raw_rows))
-                        for r in raw_rows:
-                            item = self._parse_row(r)
-                            if item:
-                                item.status = status
-                                items.append(item)
+                        subtab_items = await scrape_tab_pages(status)
+                        items.extend(subtab_items)
+                        log.info("scrape: sub-tab %s parsed %d items", name, len(subtab_items))
                     except Exception as e:
                         log.exception("Failed to scrape sub-tab %s", name)
 

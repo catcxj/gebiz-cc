@@ -28,7 +28,7 @@ class MockGeBIZScraper(BaseScraper):
     can be exercised.
     """
 
-    async def fetch(self) -> AsyncIterator[ScrapedOpportunity]:
+    async def fetch(self, existing_ids: set[str] | None = None) -> AsyncIterator[ScrapedOpportunity]:
         today = date.today()
         rnd = random.Random()
         for i in range(1, 21):

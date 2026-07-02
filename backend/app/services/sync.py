@@ -36,11 +36,14 @@ async def run_sync() -> SyncResult:
 
     new = updated = changes = 0
     try:
+        # Get existing opportunity IDs from db to enable smart stopping in pagination
+        existing_ids = {r[0] for r in db.query(Opportunity.document_no).all()}
+
         # 1. Fetch listing and upsert from all scrapers
         scrapers = get_scrapers()
         for scraper in scrapers:
             try:
-                async for item in scraper.fetch():
+                async for item in scraper.fetch(existing_ids=existing_ids):
                     created, status_changed = _upsert(db, item)
                     if created:
                         new += 1
