@@ -173,23 +173,30 @@ def _upsert(db: Session, item: ScrapedOpportunity) -> tuple[bool, bool]:
 
 def _notify_if_match(db: Session, item: ScrapedOpportunity) -> None:
     for user_id, rule in list_users_with_rules(db):
-        match = False
+        rule_keywords = rule.keywords or []
+        rule_agencies = getattr(rule, "agencies", []) or []
+        rule_categories = getattr(rule, "categories", []) or []
+
+        # If no criteria is configured, do not match anything
+        if not rule_keywords and not rule_agencies and not rule_categories:
+            continue
+
+        match = True
         
         # 1. Match keywords (description or agency)
-        if rule.keywords and (match_keywords(item.description, rule.keywords) or match_keywords(item.agency or "", rule.keywords)):
-            match = True
+        if rule_keywords:
+            if not (match_keywords(item.description, rule_keywords) or match_keywords(item.agency or "", rule_keywords)):
+                match = False
             
         # 2. Match agencies
-        rule_agencies = getattr(rule, "agencies", [])
-        if not match and rule_agencies and item.agency:
-            if any(a.strip().lower() in item.agency.lower() for a in rule_agencies if a.strip()):
-                match = True
+        if match and rule_agencies:
+            if not item.agency or not any(a.strip().lower() in item.agency.lower() for a in rule_agencies if a.strip()):
+                match = False
                 
         # 3. Match categories
-        rule_categories = getattr(rule, "categories", [])
-        if not match and rule_categories and item.procurement_category:
-            if any(c.strip().lower() in item.procurement_category.lower() for c in rule_categories if c.strip()):
-                match = True
+        if match and rule_categories:
+            if not item.procurement_category or not any(c.strip().lower() in item.procurement_category.lower() for c in rule_categories if c.strip()):
+                match = False
                 
         if match:
             dispatch(db, user_id, NotificationPayload(
