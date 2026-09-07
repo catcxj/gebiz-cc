@@ -51,6 +51,8 @@
     </label>
     <button type="submit">Search</button>
     <button type="button" class="secondary" id="btn-scrape">Trigger Scrape</button>
+    <label>Add by DOC No. <input type="text" id="add-doc" placeholder="e.g. ETT-2026-0012" style="width:170px;" /></label>
+    <button type="button" class="secondary" id="btn-add-doc">Add</button>
   </form>
 
   <div id="list-wrap"></div>
@@ -219,6 +221,30 @@ $("#jump-page").addEventListener("keydown", (e) => {
 });
 
 $("#btn-scrape").addEventListener("click", async () => { await api("/admin/scrape/trigger", { method: "POST" }); alert("Scrape started."); });
+
+$("#btn-add-doc").addEventListener("click", async () => {
+  const input = $("#add-doc");
+  const doc = input.value.trim();
+  if (!doc) { alert("Please enter a DOC No."); return; }
+  $("#btn-add-doc").disabled = true;
+  $("#btn-add-doc").textContent = "Fetching...";
+  try {
+    const res = await api(`/opportunities/${encodeURIComponent(doc)}/fetch`, { method: "POST" });
+    if (res.created) {
+      alert(`${res.opportunity.document_no} added and scraped successfully.`);
+      input.value = "";
+      state.page = 1;
+      updateUrlAndLoad();
+    } else {
+      alert(`${res.opportunity.document_no} already exists in database.`);
+    }
+  } catch (e) {
+    alert(`Failed to add ${doc}: ${e.message}`);
+  } finally {
+    $("#btn-add-doc").disabled = false;
+    $("#btn-add-doc").textContent = "Add";
+  }
+});
 
 async function refreshUnread() {
   const ns = await api("/notifications?unread_only=true&limit=50");

@@ -9,11 +9,12 @@ from sqlalchemy.orm import Session
 from ..database import get_db
 from ..models import Opportunity, Watch, InternalNote, OpportunityType, OpportunityStatus, OpportunityRespondent
 from ..schemas import (
-    OpportunityDetail, OpportunityListItem, OpportunityListResponse,
+    OpportunityDetail, OpportunityListItem, OpportunityListResponse, OpportunityFetchResult,
     InternalNoteIn, InternalNoteOut, StatusUpdateOut,
     OpportunityRespondentOut, SupplierOut, SupplierDetailOut, SupplierDetailOpportunity
 )
 from .deps import current_user_id
+from ..services.sync import fetch_opportunity_by_doc_no
 
 router = APIRouter(prefix="/opportunities", tags=["opportunities"])
 
@@ -94,6 +95,35 @@ def get_opportunity(document_no: str, db: Session = Depends(get_db), user_id: st
     d["notes"] = [InternalNoteOut.model_validate(n).model_dump() for n in opp.notes]
     d["respondents"] = [OpportunityRespondentOut.model_validate(r).model_dump() for r in opp.respondents]
     return OpportunityDetail(**d)
+
+
+@router.post("/{document_no}/fetch", response_model=OpportunityFetchResult)
+async def fetch_opportunity(document_no: str, db: Session = Depends(get_db), user_id: str = Depends(current_user_id)):
+    """
+    Given a specific DOC No.: if it does not exist in the database yet,
+    add it and scrape its data from the source site. If it already exists,
+    return it as-is (created=false).
+    """
+    doc_no = (document_no or "").strip()
+    if not doc_no:
+        raise HTTPException(400, "document_no is required")
+    try:
+        opp, created = await fetch_opportunity_by_doc_no(db, doc_no)
+    except Exception as exc:
+        raise HTTPException(502, f"scrape failed: {exc}")
+    if opp is None:
+        raise HTTPException(404, f"document {doc_no} not found on source site")
+
+    d = OpportunityDetail.model_validate(opp).model_dump()
+    d["is_watched"] = db.query(Watch).filter(Watch.document_no == doc_no, Watch.user_id == user_id).count() > 0
+    d["status_updates"] = [StatusUpdateOut.model_validate(s).model_dump() for s in opp.status_updates]
+    d["notes"] = [InternalNoteOut.model_validate(n).model_dump() for n in opp.notes]
+    d["respondents"] = [OpportunityRespondentOut.model_validate(r).model_dump() for r in opp.respondents]
+    return OpportunityFetchResult(
+        created=created,
+        message="added and scraped from source" if created else "already exists in database",
+        opportunity=OpportunityDetail(**d),
+    )
 
 
 @router.post("/{document_no}/watch", status_code=204)

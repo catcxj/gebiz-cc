@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from ..database import SessionLocal
 from ..models import Opportunity, StatusUpdate, ScrapeLog, NotificationType, Watch, OpportunityStatus, OpportunityRespondent
 from ..notifications import dispatch, NotificationPayload
-from ..scrapers import ScrapedOpportunity, get_scrapers, get_scraper_for_opp
+from ..scrapers import ScrapedOpportunity, get_scrapers, get_scraper, get_scraper_for_opp
 from .alerts import match_keywords, list_users_with_rules
 
 log = logging.getLogger(__name__)
@@ -106,6 +106,41 @@ async def run_sync() -> SyncResult:
 
     log.info("sync done: new=%d updated=%d status_changes=%d", new, updated, changes)
     return SyncResult(new=new, updated=updated, status_changes=changes)
+
+
+async def fetch_opportunity_by_doc_no(db: Session, document_no: str) -> tuple[Opportunity | None, bool]:
+    """
+    Given a specific DOC No.: if it already exists in the DB, do nothing.
+    Otherwise scrape that single opportunity from the source site, upsert it
+    (including respondents) and run keyword-match notifications.
+
+    Returns (opportunity, created). opportunity is None when the document
+    could not be found / scraped on the source site.
+    """
+    document_no = (document_no or "").strip()
+    if not document_no:
+        raise ValueError("document_no is required")
+
+    existing = db.get(Opportunity, document_no)
+    if existing is not None:
+        return existing, False
+
+    scraper = get_scraper()
+    item = await scraper.enrich_opportunity(document_no)
+    if item is None:
+        log.info("fetch_by_doc_no: %s not found on %s", document_no, scraper.__class__.__name__)
+        return None, False
+
+    created, _ = _upsert(db, item)
+    db.commit()
+    try:
+        if created:
+            _notify_if_match(db, item)
+            db.commit()
+    except Exception:
+        db.rollback()
+        log.exception("fetch_by_doc_no: notification dispatch failed for %s", document_no)
+    return db.get(Opportunity, document_no), created
 
 
 def _upsert(db: Session, item: ScrapedOpportunity) -> tuple[bool, bool]:

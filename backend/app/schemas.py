@@ -84,6 +84,12 @@ class OpportunityListResponse(BaseModel):
     items: list[OpportunityListItem]
 
 
+class OpportunityFetchResult(BaseModel):
+    created: bool
+    message: str
+    opportunity: OpportunityDetail
+
+
 class NotificationRuleIn(BaseModel):
     name: str = "默认规则"
     is_active: bool = True
