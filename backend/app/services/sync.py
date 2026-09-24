@@ -11,7 +11,7 @@ from ..database import SessionLocal
 from ..models import Opportunity, StatusUpdate, ScrapeLog, NotificationType, Watch, OpportunityStatus, OpportunityRespondent
 from ..notifications import dispatch, NotificationPayload
 from ..scrapers import ScrapedOpportunity, get_scrapers, get_scraper, get_scraper_for_opp
-from .alerts import match_keywords, list_users_with_rules
+from .alerts import list_users_with_rules, rule_matches_item
 
 log = logging.getLogger(__name__)
 
@@ -208,39 +208,16 @@ def _upsert(db: Session, item: ScrapedOpportunity) -> tuple[bool, bool]:
 
 def _notify_if_match(db: Session, item: ScrapedOpportunity) -> None:
     for user_id, rule in list_users_with_rules(db):
-        rule_keywords = rule.keywords or []
-        rule_agencies = getattr(rule, "agencies", []) or []
-        rule_categories = getattr(rule, "categories", []) or []
-
-        # If no criteria is configured, do not match anything
-        if not rule_keywords and not rule_agencies and not rule_categories:
+        if not rule_matches_item(rule, item):
             continue
 
-        match = True
-        
-        # 1. Match keywords (description or agency)
-        if rule_keywords:
-            if not (match_keywords(item.description, rule_keywords) or match_keywords(item.agency or "", rule_keywords)):
-                match = False
-            
-        # 2. Match agencies
-        if match and rule_agencies:
-            if not item.agency or not any(a.strip().lower() in item.agency.lower() for a in rule_agencies if a.strip()):
-                match = False
-                
-        # 3. Match categories
-        if match and rule_categories:
-            if not item.procurement_category or not any(c.strip().lower() in item.procurement_category.lower() for c in rule_categories if c.strip()):
-                match = False
-                
-        if match:
-            dispatch(db, user_id, NotificationPayload(
-                type=NotificationType.NewMatch,
-                title=f"[新商机 - {rule.name}] {item.document_no}",
-                body=f"{item.agency or ''} — {item.description}",
-                document_no=item.document_no,
-                payload={"agency": item.agency, "closing_at": item.closing_at.isoformat() if item.closing_at else None},
-            ), rule=rule)
+        dispatch(db, user_id, NotificationPayload(
+            type=NotificationType.NewMatch,
+            title=f"[新商机 - {rule.name}] {item.document_no}",
+            body=f"{item.agency or ''} — {item.description}",
+            document_no=item.document_no,
+            payload={"agency": item.agency, "closing_at": item.closing_at.isoformat() if item.closing_at else None},
+        ), rule=rule)
 
 
 def _notify_status_changed(db: Session, item: ScrapedOpportunity) -> None:

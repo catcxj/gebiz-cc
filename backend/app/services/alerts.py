@@ -20,6 +20,41 @@ def match_keywords(text: str, keywords: list[str]) -> bool:
     return any(k.strip().lower() in t for k in keywords if k.strip())
 
 
+def rule_matches_item(rule: NotificationRule, item) -> bool:
+    """
+    Whether an opportunity satisfies every criterion configured on the rule.
+
+    A rule with no criteria never matches. Each configured criterion must match:
+    keywords against description or agency, agencies against the published
+    agency, categories against the procurement category.
+    """
+    rule_keywords = rule.keywords or []
+    rule_agencies = getattr(rule, "agencies", []) or []
+    rule_categories = getattr(rule, "categories", []) or []
+
+    if not rule_keywords and not rule_agencies and not rule_categories:
+        return False
+
+    if rule_keywords:
+        if not (
+            match_keywords(getattr(item, "description", "") or "", rule_keywords)
+            or match_keywords(getattr(item, "agency", "") or "", rule_keywords)
+        ):
+            return False
+
+    if rule_agencies:
+        agency = getattr(item, "agency", None) or ""
+        if not agency or not any(a.strip().lower() in agency.lower() for a in rule_agencies if a.strip()):
+            return False
+
+    if rule_categories:
+        category = getattr(item, "procurement_category", None) or ""
+        if not category or not any(c.strip().lower() in category.lower() for c in rule_categories if c.strip()):
+            return False
+
+    return True
+
+
 def list_users_with_rules(db: Session) -> Iterable[tuple[str, NotificationRule]]:
     for rule in db.query(NotificationRule).filter(NotificationRule.is_active == True).all():
         yield rule.user_id, rule
@@ -59,6 +94,9 @@ def run_closing_reminders() -> int:
             remaining_days_rounded = remaining_days if delta.seconds == 0 else remaining_days + (1 if delta.seconds > 0 else 0)
 
             for rule in rules:
+                # Only remind for rules the opportunity actually matches
+                if not rule_matches_item(rule, opp):
+                    continue
                 days_list: list[int] = list(rule.countdown_days)
                 for d in days_list:
                     if remaining_days_rounded != d:
