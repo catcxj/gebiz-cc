@@ -158,6 +158,7 @@ class SupplierDetailOpportunity(BaseModel):
     status: OpportunityStatus
     published_date: Optional[date] = None
     amount: Optional[float] = None
+    awarded_amount: Optional[float] = None
     is_awarded: bool
 
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import Counter, defaultdict
 from datetime import date
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -169,30 +170,85 @@ def list_agencies(db: Session = Depends(get_db)):
     return sorted(r[0] for r in rows)
 
 
+def _supplier_key(name: str | None) -> str:
+    return (name or "").strip().lower()
+
+
+def _awarded_amount_from_details(
+    opp: Opportunity,
+    supplier_name: str,
+    awarded_counts: Counter | None = None,
+) -> float | None:
+    """
+    Return the amount actually awarded to this supplier, taken from the Award
+    tab snapshot. Returns None when the amount is not known.
+    """
+    details = opp.award_details or {}
+    awardees = details.get("awardees")
+
+    if isinstance(awardees, list) and awardees:
+        key = _supplier_key(supplier_name)
+        for awardee in awardees:
+            if _supplier_key(awardee.get("supplier_name")) == key:
+                amount = awardee.get("amount")
+                try:
+                    return float(amount) if amount is not None else None
+                except (TypeError, ValueError):
+                    return None
+        return None
+
+    # Legacy single-awardee snapshot. Before multi-award support, a
+    # multi-award page stored the TOTAL under the first supplier, so it must
+    # not be attributed to that supplier when several were awarded.
+    if awarded_counts is not None and awarded_counts.get(opp.document_no, 0) > 1:
+        return None
+    if _supplier_key(details.get("supplier_name")) == _supplier_key(supplier_name):
+        amount = details.get("amount")
+        try:
+            return float(amount) if amount is not None else None
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
 @router.get("/meta/suppliers", response_model=list[SupplierOut])
 def list_suppliers(q: Optional[str] = None, db: Session = Depends(get_db)):
     query = db.query(
         OpportunityRespondent.supplier_name,
         func.count(OpportunityRespondent.id).label("total_bids"),
         func.sum(case((OpportunityRespondent.is_awarded == True, 1), else_=0)).label("total_awards"),
-        func.sum(case((OpportunityRespondent.is_awarded == True, OpportunityRespondent.amount), else_=0)).label("total_award_amount")
     ).group_by(OpportunityRespondent.supplier_name)
-    
+
     if q:
         query = query.filter(OpportunityRespondent.supplier_name.ilike(f"%{q}%"))
-        
+
     rows = query.order_by(
         func.sum(case((OpportunityRespondent.is_awarded == True, 1), else_=0)).desc(),
         OpportunityRespondent.supplier_name
     ).all()
-    
+
+    # Awarded amounts live in the Award-tab snapshot (award_details.awardees),
+    # not in the bid amount stored on the respondent row.
+    awarded_rows = (
+        db.query(OpportunityRespondent, Opportunity)
+        .join(Opportunity, Opportunity.document_no == OpportunityRespondent.document_no)
+        .filter(OpportunityRespondent.is_awarded == True)
+        .all()
+    )
+    awarded_counts = Counter(resp.document_no for resp, _ in awarded_rows)
+    awarded_totals: dict[str, float] = defaultdict(float)
+    for resp, opp in awarded_rows:
+        amount = _awarded_amount_from_details(opp, resp.supplier_name, awarded_counts)
+        if amount is not None:
+            awarded_totals[resp.supplier_name] += amount
+
     suppliers = []
     for r in rows:
         suppliers.append(SupplierOut(
             supplier_name=r.supplier_name,
             total_bids=r.total_bids or 0,
             total_awards=r.total_awards or 0,
-            total_award_amount=float(r.total_award_amount or 0.0)
+            total_award_amount=awarded_totals.get(r.supplier_name, 0.0),
         ))
     return suppliers
 
@@ -202,27 +258,40 @@ def get_supplier(name: str, db: Session = Depends(get_db)):
     resps = db.query(OpportunityRespondent).filter(OpportunityRespondent.supplier_name == name).all()
     if not resps:
         raise HTTPException(404, "Supplier not found")
-        
+
+    doc_nos = [r.document_no for r in resps]
+    awarded_counts = Counter(
+        doc for (doc,) in db.query(OpportunityRespondent.document_no)
+        .filter(
+            OpportunityRespondent.is_awarded == True,
+            OpportunityRespondent.document_no.in_(doc_nos),
+        ).all()
+    )
+
     bids = []
     total_bids = len(resps)
     total_awards = 0
     total_award_amount = 0.0
-    
+
     for r in resps:
         opp = r.opportunity
+        awarded_amount = None
         if r.is_awarded:
             total_awards += 1
-            total_award_amount += (r.amount or 0.0)
-            
+            awarded_amount = _awarded_amount_from_details(opp, r.supplier_name, awarded_counts)
+            if awarded_amount is not None:
+                total_award_amount += awarded_amount
+
         bids.append(SupplierDetailOpportunity(
             document_no=opp.document_no,
             description=opp.description,
             status=opp.status,
             published_date=opp.published_date,
             amount=r.amount,
-            is_awarded=r.is_awarded
+            awarded_amount=awarded_amount,
+            is_awarded=r.is_awarded,
         ))
-        
+
     return SupplierDetailOut(
         supplier_name=name,
         total_bids=total_bids,

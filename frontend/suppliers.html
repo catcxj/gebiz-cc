@@ -279,6 +279,7 @@
               <th>Description</th>
               <th>Status</th>
               <th>Bid Price</th>
+              <th>Award Amount</th>
               <th>Outcome</th>
             </tr>
           </thead>
@@ -289,6 +290,7 @@
                 <td><a href="/detail.html?doc=${encodeURIComponent(b.document_no)}">${escapeHTML(b.description)}</a></td>
                 <td>${statusPill(b.status)}</td>
                 <td style="font-weight: 500;">${fmtCurrency(b.amount)}</td>
+                <td style="font-weight: 600; color: ${b.is_awarded ? '#059669' : '#6b7280'}">${b.is_awarded ? fmtCurrency(b.awarded_amount) : "—"}</td>
                 <td style="font-weight: 600; color: ${b.is_awarded ? '#059669' : '#6b7280'}">
                   ${b.is_awarded ? '<span class="medal-icon">★</span>Awarded' : 'Submitted'}
                 </td>

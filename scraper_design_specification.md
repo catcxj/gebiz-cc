@@ -163,6 +163,8 @@ for awardee in awardees:
 
 `award_details` 同时保留 `supplier_name` / `amount`（第一家，向后兼容）以及完整的 `awardees` 列表、`total_awarded_value`、`supplier_count`。
 
+Supplier Master 的 `total_award_amount` 按 `award_details.awardees[].amount`（授予额）汇总，而不是 Respondents 里的投标报价 `amount`；旧版单中标快照在 `awardees` 缺失时回退到 `award_details.amount`。重新抓取 Awarded 记录后会自动使用精确到每家供应商的授予额。
+
 ---
 
 ## 4. 数据库持久化结构设计
