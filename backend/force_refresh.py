@@ -29,8 +29,21 @@ log = logging.getLogger("force_refresh")
 async def main():
     db = SessionLocal()
     try:
-        # Get all opportunities from database
-        opps = db.query(Opportunity).all()
+        # Optional: pass one or more DOC numbers to refresh only those.
+        # e.g. python force_refresh.py MOE000ETQ26000122
+        requested = [arg.strip() for arg in sys.argv[1:] if arg.strip()]
+
+        query = db.query(Opportunity)
+        if requested:
+            query = query.filter(Opportunity.document_no.in_(requested))
+        opps = query.all()
+
+        if requested:
+            found = {o.document_no for o in opps}
+            for doc in requested:
+                if doc not in found:
+                    log.warning("Document not found in database: %s", doc)
+
         total_opps = len(opps)
         log.info(f"Found {total_opps} opportunities in database.")
         

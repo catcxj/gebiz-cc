@@ -4,7 +4,7 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime
 
-from sqlalchemy import or_, and_
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from ..database import SessionLocal
@@ -59,17 +59,32 @@ async def run_sync() -> SyncResult:
         # Commit listing phase results immediately so users see newly scraped list data in the UI
         db.commit()
 
-        # 2. Enrich active/non-final opportunities, plus Awarded opportunities that haven't been enriched yet
+        # 2. Enrich active/non-final opportunities, plus Awarded opportunities that
+        #    still need award details (new, or scraped before multi-award support).
         active_opps = db.query(Opportunity).filter(
-            or_(
-                Opportunity.status.in_([OpportunityStatus.Open, OpportunityStatus.Closed, OpportunityStatus.PendingAward]),
-                and_(
-                    Opportunity.status == OpportunityStatus.Awarded,
-                    Opportunity.award_details.is_(None)
-                )
-            )
+            Opportunity.status.in_([OpportunityStatus.Open, OpportunityStatus.Closed, OpportunityStatus.PendingAward])
         ).all()
-        log.info("sync: enriching %d active opportunities", len(active_opps))
+
+        # Older Awarded rows only stored a single supplier. Re-scrape a bounded
+        # batch per sync until they carry the full "awardees" list.
+        backfill = []
+        legacy_awarded = (
+            db.query(Opportunity)
+            .filter(Opportunity._status == OpportunityStatus.Awarded)
+            .order_by(Opportunity.updated_at.asc())
+            .all()
+        )
+        for opp in legacy_awarded:
+            has_awardees = isinstance(opp.award_details, dict) and "awardees" in opp.award_details
+            if not has_awardees:
+                backfill.append(opp)
+            if len(backfill) >= 25:
+                break
+        active_opps.extend(backfill)
+        log.info(
+            "sync: enriching %d active opportunities (%d award backfill)",
+            len(active_opps), len(backfill),
+        )
         
         for opp in active_opps:
             try:
@@ -85,6 +100,12 @@ async def run_sync() -> SyncResult:
                     if status_changed:
                         changes += 1
                         _notify_status_changed(db, enriched)
+                else:
+                    # Rotate unparseable award pages to the back of the backfill
+                    # queue instead of retrying the same rows every sync.
+                    if opp._status == OpportunityStatus.Awarded:
+                        opp.updated_at = datetime.utcnow()
+                        db.commit()
             except Exception:
                 db.rollback()
                 log.exception("failed to enrich active opportunity %s", opp.document_no)
@@ -108,11 +129,12 @@ async def run_sync() -> SyncResult:
     return SyncResult(new=new, updated=updated, status_changes=changes)
 
 
-async def fetch_opportunity_by_doc_no(db: Session, document_no: str) -> tuple[Opportunity | None, bool]:
+async def fetch_opportunity_by_doc_no(
+    db: Session, document_no: str, force: bool = False
+) -> tuple[Opportunity | None, bool]:
     """
-    Given a specific DOC No.: if it already exists in the DB, do nothing.
-    Otherwise scrape that single opportunity from the source site, upsert it
-    (including respondents) and run keyword-match notifications.
+    Given a specific DOC No.: add it from the source site, or with force=True
+    re-scrape an existing record and update it.
 
     Returns (opportunity, created). opportunity is None when the document
     could not be found / scraped on the source site.
@@ -122,20 +144,23 @@ async def fetch_opportunity_by_doc_no(db: Session, document_no: str) -> tuple[Op
         raise ValueError("document_no is required")
 
     existing = db.get(Opportunity, document_no)
-    if existing is not None:
+    if existing is not None and not force:
         return existing, False
 
-    scraper = get_scraper()
+    scraper = get_scraper_for_opp(existing) if existing is not None else get_scraper()
     item = await scraper.enrich_opportunity(document_no)
     if item is None:
         log.info("fetch_by_doc_no: %s not found on %s", document_no, scraper.__class__.__name__)
         return None, False
 
-    created, _ = _upsert(db, item)
+    created, status_changed = _upsert(db, item)
     db.commit()
     try:
         if created:
             _notify_if_match(db, item)
+            db.commit()
+        elif status_changed:
+            _notify_status_changed(db, item)
             db.commit()
     except Exception:
         db.rollback()

@@ -129,31 +129,39 @@ if await respondents_tab.count() > 0:
 }
 ```
 
-### 3.3 中标数据交叉比对
-在 `Awarded` 状态下，系统会从 `Award` Tab 提取出中标供应商名称。为了将报价清单与最终授予结果紧密结合，系统会在 Python 后端执行**交叉归一化比对**：
+### 3.3 多中标供应商交叉比对
+一个 `Award` Tab 可能包含多个中标供应商（页面显示为 `Award (2)`、`Award (3)` 等）。系统会遍历所有 `Awarded to` 区块，逐个提取供应商与其授予额度，再与 Respondents 列表做**交叉归一化比对**：
 
 ```python
-# 提取中标详情
-awarded_supplier = award_details.get("supplier_name")
-award_amount = award_details.get("amount")
+# 提取全部中标供应商（兼容旧的单中标数据）
+awardees = award_details.get("awardees") or [{
+    "supplier_name": award_details["supplier_name"],
+    "amount": award_details.get("amount"),
+}]
 
-# 遍历 Respondents 列表进行状态合并
-matched = False
-for resp in respondents_data:
-    if resp["supplier_name"].lower() == awarded_supplier.lower():
-        resp["is_awarded"] = True
-        matched = True
-        if award_amount and not resp.get("amount"):
-            resp["amount"] = award_amount
+for awardee in awardees:
+    awarded_supplier = awardee["supplier_name"]
+    award_amount = awardee.get("amount")
 
-# 极端情况兜底：若中标供应商未在投标清单中显现，则动态补录至列表
-if not matched:
-    respondents_data.append({
-        "supplier_name": awarded_supplier,
-        "amount": award_amount,
-        "is_awarded": True
-    })
+    # 遍历 Respondents 列表进行状态合并
+    matched = False
+    for resp in respondents_data:
+        if resp["supplier_name"].lower() == awarded_supplier.lower():
+            resp["is_awarded"] = True
+            matched = True
+            if award_amount and not resp.get("amount"):
+                resp["amount"] = award_amount
+
+    # 极端情况兜底：若中标供应商未在投标清单中显现，则动态补录至列表
+    if not matched:
+        respondents_data.append({
+            "supplier_name": awarded_supplier,
+            "amount": award_amount,
+            "is_awarded": True
+        })
 ```
+
+`award_details` 同时保留 `supplier_name` / `amount`（第一家，向后兼容）以及完整的 `awardees` 列表、`total_awarded_value`、`supplier_count`。
 
 ---
 
@@ -172,7 +180,7 @@ if not matched:
 | `status` | ENUM | 状态 (Open, Closed, Awarded 等) |
 | `published_date` | DATE | 发布日期 |
 | `closing_at` | DATETIME | 截止精确时间 |
-| `award_details` | JSON | 中标详情快照 (`supplier_name`, `amount`, `date`) |
+| `award_details` | JSON | 中标详情快照（`supplier_name` / `amount` / `awarded_date` 为第一家，`awardees` 为全部中标供应商，另含 `total_awarded_value`、`supplier_count`） |
 
 ### 4.2 投标清单从表 `opportunity_respondents`
 级联存储项目在 `CLOSED`、`PENDING AWARD`、`AWARDED` 状态下提取到的每一个投标商及其报价详情。

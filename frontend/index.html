@@ -229,15 +229,22 @@ $("#btn-add-doc").addEventListener("click", async () => {
   $("#btn-add-doc").disabled = true;
   $("#btn-add-doc").textContent = "Fetching...";
   try {
-    const res = await api(`/opportunities/${encodeURIComponent(doc)}/fetch`, { method: "POST" });
-    if (res.created) {
+    let res = await api(`/opportunities/${encodeURIComponent(doc)}/fetch`, { method: "POST" });
+    if (!res.created) {
+      const ok = confirm(
+        `${res.opportunity.document_no} already exists in database.\n\n` +
+        `Re-scrape it from the source and update the stored data?`
+      );
+      if (!ok) return;
+
+      res = await api(`/opportunities/${encodeURIComponent(doc)}/fetch?force=true`, { method: "POST" });
+      alert(`${res.opportunity.document_no} refreshed from source.`);
+    } else {
       alert(`${res.opportunity.document_no} added and scraped successfully.`);
       input.value = "";
-      state.page = 1;
-      updateUrlAndLoad();
-    } else {
-      alert(`${res.opportunity.document_no} already exists in database.`);
     }
+    state.page = 1;
+    updateUrlAndLoad();
   } catch (e) {
     alert(`Failed to add ${doc}: ${e.message}`);
   } finally {

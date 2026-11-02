@@ -71,7 +71,19 @@ async function load() {
           </dd>
           <dt>Contact</dt><dd>${escapeHTML(o.contact_person || "—")}</dd>
           <dt>Source</dt><dd>${o.source_url ? `<a href="${o.source_url}" target="_blank" rel="noopener">GeBIZ</a>` : "—"}</dd>
-          ${o.award_details ? `<dt>Award</dt><dd><pre style="margin:0;font-size:12px;background:#f3f4f6;padding:8px;border-radius:4px;">${escapeHTML(JSON.stringify(o.award_details, null, 2))}</pre></dd>` : ""}
+          ${o.award_details ? (() => {
+            const a = o.award_details || {};
+            const awardees = Array.isArray(a.awardees) && a.awardees.length
+              ? a.awardees
+              : (a.supplier_name ? [{ supplier_name: a.supplier_name, amount: a.amount }] : []);
+            const total = a.total_awarded_value != null
+              ? a.total_awarded_value
+              : (awardees.length > 1 ? awardees.reduce((sum, x) => sum + (x.amount || 0), 0) : (awardees[0] ? awardees[0].amount : null));
+            const rows = awardees.map(x => '<div style="display:flex; justify-content:space-between; gap:12px; padding:2px 0;"><span>🏆 ' + escapeHTML(x.supplier_name) + '</span><strong>' + fmtCurrency(x.amount) + '</strong></div>').join('');
+            return '<dt>Award' + (awardees.length > 1 ? ' (' + awardees.length + ')' : '') + '</dt>'
+              + '<dd>' + (rows || '—')
+              + '<div style="margin-top:4px; font-size:12px; color:#6b7280;">Date: ' + escapeHTML(a.awarded_date || '—') + ' · Total: ' + fmtCurrency(total) + '</div></dd>';
+          })() : ""}
         </dl>
 
         ${o.respondents && o.respondents.length ? `
